@@ -107,7 +107,7 @@ base_manga <- base_manga %>%
 #### ALERTA DE MISSINGS ####
 
 
-ODK_filtrado <- odkmissing::import_odk_propagate_required("G:/Unidades compartidas/PROYECTOS 🌍📂/🥁 PROYECTOS/🏆 Proyectos S. Desarrollo/163. BID Uruguay - Manga/2. Implementación/Componente cuantitativo/Línea de Base/05_Auditoria/ODK/encuestadores_Campo_missings.xlsx", required_value = "yes")
+ODK_filtrado <- odkmissing::import_odk_propagate_required("05_Auditoria/ODK/encuestadores_Campo_missings.xlsx", required_value = "yes")
 ODK_filtrado <- ODK_filtrado |> 
   dplyr::filter(name %in% names(base_manga))
 
