@@ -1,0 +1,11 @@
+/.Rproj.user
+.env
+.Rhistory
+/01_SurveyCTO
+/02_flujo de datos para campo
+/03_Data
+/04_Mapas
+05_Auditoria/credentials.txt
+/05_Auditoria/credentials
+*.Rproj
+/config
