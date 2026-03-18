@@ -9,3 +9,4 @@
 /05_Auditoria/credentials
 *.Rproj
 /config
+.secrets

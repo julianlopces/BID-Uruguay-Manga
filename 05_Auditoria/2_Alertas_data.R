@@ -2,6 +2,8 @@
 # Leer el archivo CSV con la ruta corregida
 base_manga <- final_data
 
+library(dplyr)
+
 base_manga <- base_manga %>%
   mutate(
     status_num = as.numeric(status_survey),
@@ -105,7 +107,7 @@ base_manga <- base_manga %>%
 #### ALERTA DE MISSINGS ####
 
 
-ODK_filtrado <- odkmissing::import_odk_propagate_required("05_Auditoria/ODK/encuestadores_Campo_missings.xlsx", required_value = "yes")
+ODK_filtrado <- odkmissing::import_odk_propagate_required("G:/Unidades compartidas/PROYECTOS 🌍📂/🥁 PROYECTOS/🏆 Proyectos S. Desarrollo/163. BID Uruguay - Manga/2. Implementación/Componente cuantitativo/Línea de Base/05_Auditoria/ODK/encuestadores_Campo_missings.xlsx", required_value = "yes")
 ODK_filtrado <- ODK_filtrado |> 
   dplyr::filter(name %in% names(base_manga))
 
@@ -223,8 +225,7 @@ colegios <- base_manga[, c("total_dup", "id_unico", "status_survey_resp","p11_02
 table(base_manga$total_dup)
 
 #### ALERTA GEOREFERENCIACIÓN ####
-
-# 2. Importar datos geográficos
+ Una vez que aceptes los permisos en el navegador, corre esto:
 url_maestra <- "https://docs.google.com/spreadsheets/d/1brA0QxuJqCq8UAE4Umc-Ms89l06OEhtR-9DmgFMv1Pg/edit#gid=0"
 maestra_poligonos <- read_sheet(url_maestra)
 
@@ -434,3 +435,25 @@ base_manga <- base_manga %>%
     Tiene_Saltos_lbl     = if_else(flag_saltos == 1, "Sí", "No"),
     Contenido_basura_lbl = if_else(flag_texto_basura == 1, "Sí", "No")
   )
+
+#---------------------------------------------------#
+#    Exportación a Google Sheets                    #
+#---------------------------------------------------#
+
+# 1. Convertir la geometría a columnas de texto/número y eliminar el objeto espacial
+base_para_looker <- base_manga %>%
+  # Extraemos las coordenadas de la columna geometry
+  mutate(
+    lat_final = st_coordinates(geometry)[,2],
+    lon_final = st_coordinates(geometry)[,1]
+  ) %>%
+  # Eliminamos la columna de geometría para que no dé error
+  st_drop_geometry() %>%
+  # Opcional: convertir a data.frame puro para asegurar compatibilidad
+  as.data.frame()
+
+# Sustituye con el ID o URL de tu Google Sheet
+id_sheet <- "https://docs.google.com/spreadsheets/d/1bY3Ua6IpZOWrX99Mr2SenWUgByhRIbBk1Bce3oRcmvw/edit?gid=527719951#gid=527719951"
+
+# Escribir en la hoja (si la hoja no existe, la crea; si existe, la sobrescribe)
+sheet_write(base_para_looker, ss = id_sheet, sheet = "base_manga_looker") 
