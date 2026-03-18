@@ -225,7 +225,6 @@ colegios <- base_manga[, c("total_dup", "id_unico", "status_survey_resp","p11_02
 table(base_manga$total_dup)
 
 #### ALERTA GEOREFERENCIACIÓN ####
- Una vez que aceptes los permisos en el navegador, corre esto:
 url_maestra <- "https://docs.google.com/spreadsheets/d/1brA0QxuJqCq8UAE4Umc-Ms89l06OEhtR-9DmgFMv1Pg/edit#gid=0"
 maestra_poligonos <- read_sheet(url_maestra)
 
