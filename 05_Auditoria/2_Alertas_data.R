@@ -435,24 +435,3 @@ base_manga <- base_manga %>%
     Contenido_basura_lbl = if_else(flag_texto_basura == 1, "Sí", "No")
   )
 
-#---------------------------------------------------#
-#    Exportación a Google Sheets                    #
-#---------------------------------------------------#
-
-# 1. Convertir la geometría a columnas de texto/número y eliminar el objeto espacial
-base_para_looker <- base_manga %>%
-  # Extraemos las coordenadas de la columna geometry
-  mutate(
-    lat_final = st_coordinates(geometry)[,2],
-    lon_final = st_coordinates(geometry)[,1]
-  ) %>%
-  # Eliminamos la columna de geometría para que no dé error
-  st_drop_geometry() %>%
-  # Opcional: convertir a data.frame puro para asegurar compatibilidad
-  as.data.frame()
-
-# Sustituye con el ID o URL de tu Google Sheet
-id_sheet <- "https://docs.google.com/spreadsheets/d/1bY3Ua6IpZOWrX99Mr2SenWUgByhRIbBk1Bce3oRcmvw/edit?gid=527719951#gid=527719951"
-
-# Escribir en la hoja (si la hoja no existe, la crea; si existe, la sobrescribe)
-sheet_write(base_para_looker, ss = id_sheet, sheet = "base_manga_looker") 

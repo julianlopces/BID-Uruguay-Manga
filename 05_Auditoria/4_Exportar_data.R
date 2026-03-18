@@ -32,15 +32,28 @@ export_sheet(final_data,sheet_crudas, "BID_Celulares_Crudas",label = "Crudas",pa
 # Exportar datos auditados -----------------------------------------------------
 
 sheet_auditadas <- tryCatch({
-  gs4_get("16JVkLiNzUsULos7e9z7aHnvUmwDFFNG2zXlhKQq8FSk")
+  gs4_get("1bY3Ua6IpZOWrX99Mr2SenWUgByhRIbBk1Bce3oRcmvw")
 }, error = function(e) {
   stop("Error al conectar con el Google Sheet de alertas: ", e)
 })
 
-base_manga_export <- base_manga %>%
-  mutate(across(where(~inherits(.x, "sfc")), st_as_text)) %>%
-  as_tibble() # Transformar columnas geoespaciales a texto para exportar
+# 1. Convertir la geometría a columnas de texto/número y eliminar el objeto espacial
+base_para_looker <- base_manga %>%
+  # Extraemos las coordenadas de la columna geometry
+  mutate(
+    lat_final = st_coordinates(geometry)[,2],
+    lon_final = st_coordinates(geometry)[,1]
+  ) %>%
+  # Eliminamos la columna de geometría para que no dé error
+  st_drop_geometry() %>%
+  # Opcional: convertir a data.frame puro para asegurar compatibilidad
+  as.data.frame()
 
 # Exportar usando el wrapper
-export_sheet(base_manga_export,sheet_auditadas, "BID_Celulares_Auditadas",label = "Auditadas",pause = 5)
+export_sheet(base_para_looker,sheet_auditadas, "BID_Celulares_Auditadas",label = "Auditadas",pause = 5)
+
+
+
+
+
 

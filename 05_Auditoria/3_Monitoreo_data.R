@@ -67,6 +67,18 @@ print(consolidado_encuestadores_manga)
 id_sheet <- "https://docs.google.com/spreadsheets/d/1my_dgomVoXUI8ADPGIV8WyYek1qQtFuVsO_lvKxDhLY/edit?gid=0#gid=0"
 
 # Escribir en la hoja (si la hoja no existe, la crea; si existe, la sobrescribe)
+
+consolidado_encuestadores_manga <- consolidado_encuestadores_manga %>%
+  # Extraemos las coordenadas de la columna geometry
+  mutate(
+    lat_final = st_coordinates(geometry)[,2],
+    lon_final = st_coordinates(geometry)[,1]
+  ) %>%
+  # Eliminamos la columna de geometría para que no dé error
+  st_drop_geometry() %>%
+  # Opcional: convertir a data.frame puro para asegurar compatibilidad
+  as.data.frame()
+
 sheet_write(consolidado_encuestadores_manga, ss = id_sheet, sheet = "consolidado_encuestadores_manga") 
 
 # --- PASO A: Detalle de Texto Basura ---
@@ -144,4 +156,6 @@ tabla_gestion_manga <- base_manga %>%
 
 
 # Escribir en la hoja (si la hoja no existe, la crea; si existe, la sobrescribe)
+
+
 sheet_write(tabla_gestion_manga, ss = id_sheet, sheet = "tabla_gestion_manga") 
