@@ -1,4 +1,4 @@
-# Importar datos
+# Importar datos en fdglkdfg lo que sea
 
 proyectos_ids <- c("prueba_censo_manga_encuestadores") 
 
