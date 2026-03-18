@@ -1,11 +1,9 @@
 name: BID Uruguay - Pipeline Alertas
 
 on:
-  workflow_dispatch: # Permite ejecutarlo manualmente desde la pestaña Actions
+  workflow_dispatch:
   schedule:
-    # Corre cada 2 horas (UTC). 
-    # 00:00 UTC es 21:00 Uruguay (-3h).
-    - cron: "0 */2 * * *" 
+    - cron: "0 */2 * * *"
 
 concurrency:
   group: bid-manga-alertas
@@ -18,7 +16,6 @@ jobs:
 
     env:
       GITHUB_ACTIONS: "true"
-      # Estos secretos deben estar configurados en Settings > Secrets del Repo
       SCTO_SERVER: ${{ secrets.SCTO_SERVER }}
       SCTO_USER: ${{ secrets.SCTO_USER }}
       SCTO_PW: ${{ secrets.SCTO_PW }}
@@ -30,7 +27,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install System Dependencies (Linux)
-        # Necesario para paquetes espaciales (sf) y otros
         run: |
           sudo apt-get update
           sudo apt-get install -y libudunits2-dev libgdal-dev libgeos-dev libproj-dev libharfbuzz-dev libfribidi-dev
@@ -64,5 +60,6 @@ jobs:
             any::sf
 
       - name: Run Master Script
-        # Como el script está en la raíz del repo:
         run: Rscript BID_Uruguay_master_script.R
+        
+        
