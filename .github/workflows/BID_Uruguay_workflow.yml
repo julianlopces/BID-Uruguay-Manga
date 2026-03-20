@@ -3,7 +3,7 @@ name: BID Uruguay - Pipeline Alertas
 on:
   workflow_dispatch:
   #schedule:
-    #- cron: "0 */2 * * *" 
+   # - cron: "0 */2 * * *" 
 
 concurrency:
   group: bid-manga-alertas
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 45 # Bajamos de 60 a 45 porque será más rápido
+    timeout-minutes: 40
 
     env:
       GITHUB_ACTIONS: "true"
@@ -42,7 +42,10 @@ jobs:
           extra-packages: |
             github::julianlopces/odkmissing
             any::pacman
-            any::tidyverse
+            any::dplyr
+            any::tidyr
+            any::stringr
+            any::lubridate
             any::httr
             any::jsonlite
             any::googledrive
@@ -54,5 +57,3 @@ jobs:
 
       - name: Run Master Script
         run: Rscript BID_Uruguay_master_script.R
-        
-        

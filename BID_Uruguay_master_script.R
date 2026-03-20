@@ -11,15 +11,18 @@ library(pacman)
 
 # 2. Carga de librerías optimizada para GitHub Actions
 p_load(
-  tidyverse,      # dplyr, stringr, lubridate, tidyr
+  dplyr,          # Manipulación de datos (mutate, group_by, etc.)
+  tidyr,          # Limpieza de datos (pivot, drop_na)
+  stringr,        # Manipulación de texto básica
+  lubridate,      # Gestión de fechas y starttime
   httr,           # API SurveyCTO
   jsonlite,       # Parsear JSON
-  googledrive,    # Google Drive API
-  googlesheets4,  # Google Sheets API
-  janitor,        # Limpieza de nombres
+  googledrive,    # Google Drive
+  googlesheets4,  # Google Sheets
+  janitor,        # clean_names()
   dotenv,         # Variables de entorno
   sf,             # Cálculos espaciales
-  stringi         # Procesamiento de texto avanzado
+  stringi         # stri_trans_general (para limpieza de tildes/basura)
 )
 
 # 3. Instalación de odkmissing (Repositorio externo)
