@@ -149,16 +149,44 @@ variables_saltos <- names(base_manga)[grepl("^s_", names(base_manga))]
 
 base_manga <- base_manga |>
   dplyr::mutate(
-    total_saltos = rowSums(dplyr::pick(dplyr::all_of(variables_missing)), na.rm = TRUE)
+    total_saltos = rowSums(dplyr::pick(dplyr::all_of(variables_saltos)), na.rm = TRUE)
   )
 
+library(dplyr)
+library(tidyr)
+
+# 1. Identificamos todas las columnas que empiezan con m_ o s_
+variables_audit <- names(base_manga)[grepl("^[ms]_", names(base_manga))]
+
+# 2. Creamos la tabla de "Hallazgos"
+tabla_errores_por_padron <- base_manga |>
+  # Seleccionamos el ID y las columnas de flags
+  dplyr::select(padron_pull, dplyr::all_of(variables_audit)) |>
+  # Pasamos a formato largo: una fila por cada variable con flag
+  tidyr::pivot_longer(
+    cols = -padron_pull,
+    names_to = "variable_con_problema",
+    values_to = "valor"
+  ) |>
+  # Filtramos para quedarnos SOLO con los casos donde hay un 1 (error/salto)
+  dplyr::filter(valor == 1) |>
+  # Opcional: Limpiar el nombre para que sea más legible
+  dplyr::mutate(
+    tipo_incidencia = ifelse(grepl("^m_", variable_con_problema), "Missing", "Salto"),
+    variable_original = gsub("^[ms]_", "", variable_con_problema)
+  ) |>
+  # Ordenamos por padrón para que sea fácil de leer
+  dplyr::arrange(padron_pull)
+
+# 3. Ver el resultado
+print(tabla_errores_por_padron)
 
 #---------------------------------------#
 # Valores numéricos extremos #
 #---------------------------------------#
 
 # 1. Definimos la lista de variables a las que queremos aplicar el Z-score
-vars_to_check <- c("p2_02", "p3_02a", "p3_07", "p4_01", "p4_02", 
+vars_to_check <- c("p1_06", "p2_02", "p3_06", "p4_01", "p4_02", 
                    "p4_03", "p4_04", "p10_03", "p5_09", "p5_19", "p8_01")
 
 # 2. Aplicamos la lógica de forma masiva
@@ -198,7 +226,8 @@ base_manga <- base_manga %>%
     id_unico = case_when(
       status_survey == 1 ~ paste(p11_02_nombre, p11_02_apellido, p11_03a, sep = "_"),
       status_survey == 4 ~ paste(nombre_contacto, telefono, sep = "_"),
-      TRUE ~ as.character(status_survey)
+      status_survey !=4 |  status_survey !=1 ~ paste(padron_pull, status_survey_resp, sep = "_"),
+      TRUE ~ as.character(NA)
     )
   ) %>%
   mutate(
@@ -213,7 +242,7 @@ base_manga <- base_manga %>%
   ungroup()
 
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
-colegios <- base_manga[, c("total_dup", "id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto")]
+dup <- base_manga[, c("total_dup", "id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto")]
 
 # Crea un vector con los id_unico que quieres eliminar
 # ids_a_borrar <- c("62165385", "62500313", "10000411", "62500338") 
@@ -228,55 +257,69 @@ table(base_manga$total_dup)
 url_maestra <- "https://docs.google.com/spreadsheets/d/1brA0QxuJqCq8UAE4Umc-Ms89l06OEhtR-9DmgFMv1Pg/edit#gid=0"
 maestra_poligonos <- read_sheet(url_maestra)
 
-# ... (Pasos 1 y 2 igual: cargar librerías y leer Sheet)
-
-# 3. Procesar Maestra (Mantenla como tabla normal para el Join)
+# 1. Preparar la Maestra de Polígonos
 maestra_data <- maestra_poligonos %>%
   filter(!is.na(wkt_geom)) %>%
-  mutate(padron = as.character(padron)) %>%
-  as.data.frame() # <-- ESTO ELIMINA EL ERROR DEL JOIN
-# No la convertimos a SF aquí todavía para evitar el error del Join
+  mutate(padron = as.character(padron))
 
-# 4. Procesar Base Manga (Puntos)
-base_manga <- base_manga %>%
+# Convertir la columna de texto WKT a objetos espaciales reales
+# IMPORTANTE: Definimos que el origen es 32721 porque tus datos tienen números grandes (metros)
+maestra_sf <- st_as_sf(maestra_data, wkt = "wkt_geom", crs = 32721)
+
+# 2. Procesar Base Manga (Tus Puntos)
+base_manga_sf <- base_manga %>%
   mutate(
     latitud = as.numeric(georeferenciacion_latitude),
     longitud = as.numeric(georeferenciacion_longitude),
-    padron_pull = as.character(padron_pull),
-    padron_pull = "129431",
+    padron_pull = as.character(padron_pull) # ELIMINADA la línea que forzaba el "129431"
   ) %>%
   filter(!is.na(latitud) & !is.na(longitud)) %>%
+  # Creamos el objeto espacial en WGS84 (4326)
   st_as_sf(coords = c("longitud", "latitud"), crs = 4326) %>%
+  # Lo transformamos a UTM (32721) para que coincida con los polígonos y medir en METROS
   st_transform(32721)
 
-# 5. Cruce de datos (Ahora el left_join funcionará sin errores)
-base_manga <- base_manga %>%
-  left_join(maestra_data, by = c("padron_pull" = "padron")) %>%
-  filter(!is.na(wkt_geom)) # Quitamos los que no tienen polígono en la maestra
+# 3. Join de datos
+# Convertimos maestra_sf a un df normal para que el join no de error de clase 'sf'
+# Pero mantenemos la columna de geometría (wkt_geom) intacta
+maestra_join <- maestra_sf %>% 
+  as.data.frame() %>% 
+  select(padron, wkt_geom)
 
-# 6. Cálculo FILA POR FILA
-# Convertimos la columna wkt_geom a geometría real dentro del cálculo
-poligonos_geometria <- st_as_sfc(base_manga$wkt_geom, crs = 32721)
+base_manga_sf <- base_manga_sf %>%
+  left_join(maestra_join, by = c("padron_pull" = "padron")) %>%
+  # Ahora tenemos 'geometry' (puntos) y 'wkt_geom' (polígonos)
+  rename(geom_punto = geometry, geom_poligono = wkt_geom)
 
-base_manga$distancia_m <- as.numeric(
-  st_distance(base_manga$geometry, poligonos_geometria, by_element = TRUE)
+# 4. Cálculo de distancia fila por fila
+# Es fundamental usar 'by_element = TRUE' para que compare 
+# el punto 1 con el polígono 1, el punto 2 con el polígono 2, etc.
+base_manga_sf$distancia_m <- as.numeric(
+  st_distance(base_manga_sf$geom_punto, base_manga_sf$geom_poligono, by_element = TRUE)
 )
 
-# 7. Crear Alerta y Resumen
-base_manga <- base_manga %>%
-  mutate(alerta = ifelse(distancia_m > 10, "REVISAR: Fuera de rango", "OK"))
+# 5. Verificación de resultados
+summary(base_manga_sf$distancia_m)
 
-# Resultados finales
-summary(base_manga$distancia_m)
-table(base_manga$alerta)
+# 5. Crear Alerta
+base_manga_sf <- base_manga_sf %>%
+  mutate(alerta_geo = ifelse(distancia_m > 20, "REVISAR: Fuera de rango", "OK"))
+
+# Volver a dataframe normal si es necesario para Looker
+base_manga <- base_manga_sf %>% st_drop_geometry() %>% as.data.frame()
+
+# Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
+distancia <- base_manga[, c("alerta_geo", "distancia_m", "status_survey_resp","gps_precision")]
+
+
 
 #### ALERTA NSNR ####
 
 # 1. Definimos la lista de variables que tienen opción NS/NR según tus choices
 # Incluimos ingresos, gastos, años, y objetos del hogar
-vars_nsnr <- c("p4_04", "p4_05", "p5_08", "p5_19", "p8_01", "p3_08a", 
-               "p3_08b", "p3_08c", "p3_08d", "p3_08e", "p3_08f", 
-               "p3_08g", "p3_08h", "p3_08i", "p3_08j", "p5_06", "p5_07",  "p5_11")
+vars_nsnr <- c("p4_04", "p4_05", "p5_08", "p5_19", "p8_01", "p3_07a", 
+               "p3_07b", "p3_07c", "p3_07d", "p3_07e", "p3_07f", 
+               "p3_07g", "p3_07h", "p3_07i", "p3_07j", "p5_06", "p5_07",  "p5_11")
 
 # 2. Contamos cuántos NS/NR hay por encuesta
 # En tus labels, los valores NS/NR son -1 o 98
@@ -300,7 +343,6 @@ base_manga <- base_manga %>%
     alerta_exceso_nsnr = if_else(efectiva == 1 & total_nsnr > umbral_nsnr, 1, 0, missing = 0)
   ) %>%
   ungroup()
-
 
 #-------------------------------#
 # 7.Alerta: Contenido basura    #

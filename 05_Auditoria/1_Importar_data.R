@@ -1,6 +1,6 @@
-# Importar datos en fdglkdfg lo que sea
+# Importar datos
 
-proyectos_ids <- c("prueba_censo_manga_encuestadores") 
+proyectos_ids <- c("campo_manga_encuestadores") 
 
 # --- FUNCIÓN MEJORADA --- 
 procesar_proyecto_missings <- function(id_proyecto) {
