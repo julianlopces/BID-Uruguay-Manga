@@ -1,6 +1,6 @@
 
 # 1. Leer el Case Management
-url_case_management <- "https://docs.google.com/spreadsheets/d/1RvN_wdzkPQWiznNioztrt3AaB1kjVevf5q2koRFAc1Y/edit#gid=1876947279"
+url_case_management <- "https://docs.google.com/spreadsheets/d/1sTN_sAiAoEGg30Y5Y2pC382ZVs5lD3WlFzWLPReuMsU/edit?gid=179862683#gid=179862683"
 case_management <- read_sheet(url_case_management)
 
 # 2. Calcular padrones únicos asignados por encuestador
@@ -159,3 +159,26 @@ tabla_gestion_manga <- base_manga %>%
 
 
 sheet_write(tabla_gestion_manga, ss = id_sheet, sheet = "tabla_gestion_manga") 
+
+
+# 1. Crear la base específica para la Arquitecta
+base_revision_arqui <- base_manga %>%
+  # Filtrar solo grupos 3 (Esquema Simple) o 4 (Esquema Detallado)
+  filter(grupo_3 == 1 | grupo_4 == 1) %>%
+  # Seleccionar y renombrar columnas para que sean legibles en Excel
+  select(
+    `PADRÓN` = padron_pull,
+    `SUPERVISOR` = supervisor_pull,
+    `TÉCNICO` = tecnico_pull,
+    `ENCUESTADOR` = ident_enc_resp,
+    `FOTO FRENTE ESQUEMA` = foto_ef_anverso,
+    `FOTO REVERSO ESQUEMA` = foto_ef_reverso
+  ) %>%
+  # Añadir las columnas vacías para que la arquitecta escriba
+  mutate(
+    `STATUS DE REVISIÓN` = "",
+    `COMENTARIOS DE LA ARQUI` = ""
+  )
+
+
+sheet_write(base_revision_arqui, ss = id_sheet, sheet = "Supervisión esquemas funcionales") 

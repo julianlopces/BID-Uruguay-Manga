@@ -2,7 +2,35 @@
 # Leer el archivo CSV con la ruta corregida
 base_manga <- final_data
 
-library(dplyr)
+base_manga <- base_manga %>%
+  relocate(key, .before = padron_pull)
+
+# --- SECCIÓN DE LIMPIEZA INICIAL ---
+# Lista de IDs (instanceID o id_unico) que deben eliminarse definitivamente
+ids_a_eliminar <- c(
+  "uuid:57dbdf02-f95c-4e09-8614-6df9ae81f309",
+  "uuid:5d8d35c8-c43f-4935-a8ff-ff6388f03bd1",
+  "uuid:51b19331-23f1-420f-8ca2-70f17b0f343c",
+  "uuid:af9818e4-e7ae-485b-844f-ee139dc0beaa",
+  "uuid:bf556c11-a005-4c3d-9d74-26654f488f1f",
+  "uuid:dae55bf4-69ad-4a49-9236-8d17985b4705"
+)
+
+base_manga <- base_manga %>%
+  filter(!(key %in% ids_a_eliminar))
+
+print(paste("Encuestas eliminadas por blacklist:", length(ids_a_eliminar)))
+
+base_manga <- base_manga %>%
+  mutate(
+    across(starts_with("fcs"), as.numeric),
+    across(starts_with("rcsi"), as.numeric),
+    across(starts_with("hhs"), as.numeric),
+    submission_date = mdy_hms(submission_date, tz = "UTC"),
+    # Ajuste para Uruguay (UTC-3)
+    submission_date = submission_date - hours(3)
+  ) %>%
+  filter(submission_date >= ymd("2026-02-27"))
 
 base_manga <- base_manga %>%
   mutate(
@@ -14,7 +42,7 @@ base_manga <- base_manga %>%
     
     # NO EFECTIVA: Rechazos, desocupadas, sin red, o +4 visitas sin éxito
     no_efectiva = if_else(
-      status_num %in% c(5, 6, 7, 9) | (status_num %in% c(2, 4, 8) & visita_num >= 4), 
+      status_num %in% c(5, 6, 7, 9, 10) | (status_num %in% c(2, 4, 8) & visita_num >= 4), 
       1, 0, missing = 0
     ),
     
@@ -225,7 +253,7 @@ base_manga <- base_manga %>%
   mutate(
     id_unico = case_when(
       status_survey == 1 ~ paste(p11_02_nombre, p11_02_apellido, p11_03a, sep = "_"),
-      status_survey == 4 ~ paste(nombre_contacto, telefono, sep = "_"),
+      status_survey == 4 ~ paste(id,nombre_contacto, telefono, sep = "_"),
       status_survey !=4 |  status_survey !=1 ~ paste(padron_pull, status_survey_resp, sep = "_"),
       TRUE ~ as.character(NA)
     )
@@ -242,7 +270,7 @@ base_manga <- base_manga %>%
   ungroup()
 
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
-dup <- base_manga[, c("total_dup", "id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto")]
+dup <- base_manga[, c("total_dup","id", "day" ,"id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto", "key")]
 
 # Crea un vector con los id_unico que quieres eliminar
 # ids_a_borrar <- c("62165385", "62500313", "10000411", "62500338") 
@@ -309,7 +337,7 @@ base_manga_sf <- base_manga_sf %>%
 base_manga <- base_manga_sf %>% st_drop_geometry() %>% as.data.frame()
 
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
-distancia <- base_manga[, c("alerta_geo", "distancia_m", "status_survey_resp","gps_precision")]
+distancia <- base_manga[, c("alerta_geo", "distancia_m", "status_survey_resp","gps_precision","key")]
 
 
 
@@ -460,8 +488,6 @@ base_manga <- base_manga %>%
         flag_duplicated == 1 | 
         flag_geofencing == 1 |
         flag_nsnr == 1 |
-        flag_missing == 1 |
-        flag_saltos == 1 |
         flag_texto_basura == 1,
       1, 0
     ),
@@ -477,3 +503,10 @@ base_manga <- base_manga %>%
     Contenido_basura_lbl = if_else(flag_texto_basura == 1, "Sí", "No")
   )
 
+
+base_manga <- base_manga %>%
+  select(!starts_with("m_"))
+base_manga <- base_manga %>%
+  select(!starts_with("s_"))
+base_manga <- base_manga %>%
+  select(!starts_with("ex_"))
