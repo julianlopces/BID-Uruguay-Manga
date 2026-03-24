@@ -22,6 +22,55 @@ base_manga <- base_manga %>%
 print(paste("Encuestas eliminadas por blacklist:", length(ids_a_eliminar)))
 
 base_manga <- base_manga %>%
+  filter(!(day == "Mar 23, 2026"))
+
+# --- DICCIONARIO DE CORRECCIONES MANUALES ---
+# Agrega aquí cualquier KEY que necesite corrección de ID
+correcciones_manuales <- tribble(
+  ~key,                                         ~id_correcto,
+  "uuid:9029d292-00c6-4fc4-b59e-c8a5ffdc7c4d",  "164079",
+)
+
+# --- APLICACIÓN AUTOMÁTICA DE CORRECCIONES ---
+base_manga <- base_manga %>%
+  left_join(correcciones_manuales, by = "key") %>%
+  mutate(
+    # Si existe un id_correcto en nuestro diccionario, lo usamos; 
+    # si no (NA), mantenemos el original.
+    id = if_else(!is.na(id_correcto), id_correcto, as.character(id)),
+    padron_pull = if_else(!is.na(id_correcto), id_correcto, as.character(padron_pull))
+  ) %>%
+  select(-id_correcto) # Eliminamos la columna auxiliar para mantener limpia la base
+
+# Verificación en consola (opcional)
+print(paste("Correcciones manuales aplicadas:", nrow(correcciones_manuales)))
+
+
+# --- DICCIONARIO DE CORRECCIONES DE STATUS ---
+# Para forzar un cambio de resultado en encuestas específicas
+correcciones_status <- tribble(
+  ~key,                                         ~status_nuevo,
+  "uuid:a95eef92-c5a1-40af-9c84-41fbfb5332ec",  5, # Código 5 = RECHAZO
+)
+
+# --- APLICACIÓN DE CORRECCIONES DE STATUS ---
+base_manga <- base_manga %>%
+  left_join(correcciones_status, by = "key") %>%
+  mutate(
+    # Cambiamos el código numérico principal
+    status_survey = if_else(!is.na(status_nuevo), as.character(status_nuevo), as.character(status_survey)),
+    
+    # CAMBIO SOLICITADO: Ajustamos las columnas de salida/publicación
+    pub_status = if_else(!is.na(status_nuevo), "RECHAZO", as.character(pub_status)),
+    
+    # Ajustamos la respuesta de texto (Label)
+    status_survey_resp = if_else(!is.na(status_nuevo), "RECHAZO", as.character(status_survey_resp))
+  ) %>%
+  select(-status_nuevo) # Limpiamos la columna auxiliar
+
+# --- CORRECIÓN DE FECHA ---
+
+base_manga <- base_manga %>%
   mutate(
     across(starts_with("fcs"), as.numeric),
     across(starts_with("rcsi"), as.numeric),
@@ -32,57 +81,90 @@ base_manga <- base_manga %>%
   ) %>%
   filter(submission_date >= ymd("2026-02-27"))
 
+# --- FLUJO PRINCIPAL DE AUDITORÍA ---
+# 2. CLASIFICACIÓN DE AUDITORÍA (CORREGIDO)
 base_manga <- base_manga %>%
   mutate(
     status_num = as.numeric(status_survey),
-    visita_num = as.numeric(visita_pull),
+    # Creamos las categorías maestras
+    es_efectiva = if_else(status_num == 1, 1, 0),
+    es_rechazo   = if_else(status_num == 5, 1, 0),
+    es_no_elegible = if_else(status_num %in% c(6, 7,8, 9, 10), 1, 0),
+    es_agendada  = if_else(status_num %in% c(2, 3, 4), 1, 0),
     
-    # EFECTIVA: Status 1 (Completa)
-    efectiva = if_else(status_num == 1, 1, 0, missing = 0),
-    
-    # NO EFECTIVA: Rechazos, desocupadas, sin red, o +4 visitas sin éxito
-    no_efectiva = if_else(
-      status_num %in% c(5, 6, 7, 9, 10) | (status_num %in% c(2, 4, 8) & visita_num >= 4), 
-      1, 0, missing = 0
-    ),
-    
-    # AGENDADA: Citas o ausentes con menos de 4 visitas
-    agendada = if_else(
-      status_num %in% c(2, 4, 8) & visita_num < 4, 
-      1, 0, missing = 0
-    ),
-    
-    # Variable de etiqueta para agrupar
-    tipo_encuesta_lbl = case_when(
-      efectiva == 1 ~ "EFECTIVA",
-      no_efectiva == 1 ~ "NO EFECTIVA",
-      agendada == 1 ~ "AGENDADA",
-      TRUE ~ "OTRO"
+    # Esta etiqueta es la que usaremos para promedios y grupos
+    categoria_auditoria = case_when(
+      es_efectiva == 1    ~ "EFECTIVA",
+      es_rechazo == 1     ~ "RECHAZO",
+      es_no_elegible == 1 ~ "NO ELEGIBLE",
+      es_agendada == 1    ~ "AGENDADA/PENDIENTE",
+      TRUE                ~ "OTRO/ERROR"
     )
   )
 
+# 3. SELECCIÓN DE LA MEJOR VISITA POR PADRÓN
 base_manga <- base_manga %>%
   group_by(padron_pull) %>%
   mutate(
-    # Creamos un peso de prioridad: Efectiva (3), Agendada (2), No Efectiva (1), Otros (0)
+    # Prioridad: Efectiva > Agendada > Rechazo > No Elegible
     prioridad_status = case_when(
-      tipo_encuesta_lbl == "EFECTIVA" ~ 3,
-      tipo_encuesta_lbl == "AGENDADA" ~ 2,
-      tipo_encuesta_lbl == "NO EFECTIVA" ~ 1,
+      categoria_auditoria == "EFECTIVA" ~ 4,
+      categoria_auditoria == "AGENDADA/PENDIENTE" ~ 3,
+      categoria_auditoria == "RECHAZO" ~ 2,
+      categoria_auditoria == "NO ELEGIBLE" ~ 1,
       TRUE ~ 0
     )
   ) %>%
-  # Ordenamos dentro de cada padrón: 
-  # Primero por prioridad (desc), luego por número de visita (desc)
-  arrange(padron_pull, desc(prioridad_status), desc(visita_num)) %>%
-  mutate(
-    # Marcamos como 1 la primera fila de cada grupo tras el ordenamiento
-    encuesta_final = if_else(row_number() == 1, 1, 0)
-  ) %>%
+  # Ordenamos por prioridad y luego por la visita más alta
+  arrange(padron_pull, desc(submission_date)) %>%
+  mutate(encuesta_final = if_else(row_number() == 1, 1, 0)) %>%
   ungroup()
 
 # Verificación rápida
-table(base_manga$encuesta_final, base_manga$tipo_encuesta_lbl)
+table(base_manga$encuesta_final, base_manga$categoria_auditoria)
+
+otro <- base_manga %>%
+  filter(encuesta_final==0 & categoria_auditoria == "EFECTIVA" )
+
+
+# Suponiendo que tu base se llama base_manga y la columna de texto es comentarios_pub
+base_manga <- base_manga %>%
+  mutate(
+    categoria_comentario = case_when(
+      # 1. INFRAESTRUCTURA TÉCNICA
+      str_detect(str_to_lower(pub_comentario), "colector|frentista|camara|pozo|conexion|saneamiento") ~ "Infraestructura/Técnico",
+      
+      # 2. AUSENTISMO (Logística)
+      str_detect(str_to_lower(pub_comentario), "nadie|no hay nadie|no atendio|no responde|ausente|vuelv|mañana|cita") ~ "Ausentismo/Revisita",
+      
+      # 3. RECHAZOS
+      str_detect(str_to_lower(pub_comentario), "rechazo|no quiso|no quiere|disconformidad|no dispuesta") ~ "Rechazo",
+      
+      # 4. CONDICIÓN DEL PADRÓN (No elegibles)
+      str_detect(str_to_lower(pub_comentario), "desocupado|baldio|construccion|vacia|comercio|deposito|inau|iglesia|usina") ~ "Padrón No Elegible",
+      
+      # 5. DESCRIPTIVOS / REFERENCIAS
+      str_detect(str_to_lower(pub_comentario), "casa|puerta|reja|jardin|ladrillo|fachada|techo|cerco") ~ "Descripción Física",
+      
+      # 6. ÉXITO / TRÁMITE NORMAL
+      str_detect(str_to_lower(pub_comentario), "completa|fluida|buena|correcta|terminada|finalizada") ~ "Encuesta Exitosa",
+      
+      # 7. CASOS VACÍOS O PUNTOS
+      is.na(pub_comentario) | pub_comentario %in% c(".", "") ~ "Sin Comentario Real",
+      
+      # Categoría por defecto si no entra en ninguna
+      TRUE ~ "Otros/Revisión Manual"
+    )
+  ) %>%
+  # Mover la variable recién creada después de comentarios_pub
+  relocate(categoria_comentario, .after = pub_comentario)
+
+# Verificación de cuántos cayeron en cada bolsa
+table(base_manga$categoria_comentario)
+
+coment <- base_manga %>%
+  select(pub_comentario, categoria_comentario)
+
 
 # Esto debería darte exactamente 1 por cada padrón único
 check_unicos <- base_manga %>% 
@@ -96,6 +178,9 @@ if(nrow(check_unicos) == 0) {
   print("Ojo: Hay padrones duplicados aún. Revisar datos de origen.")
 }
 
+base_manga <- base_manga %>%
+  filter(encuesta_final==1)
+
 #### Alertas ####
 #---------------#
 
@@ -104,7 +189,7 @@ if(nrow(check_unicos) == 0) {
 # 2. Alerta de Tiempo usando tu lógica pero agrupada
 base_manga <- base_manga %>%
   mutate(duration_min = as.numeric(duration) / 60) %>%
-  group_by(tipo_encuesta_lbl) %>% # <--- La clave está aquí
+  group_by(categoria_auditoria) %>% # <--- La clave está aquí
   mutate(
     media_grupo = mean(duration_min, na.rm = TRUE),
     sd_grupo = sd(duration_min, na.rm = TRUE),
@@ -131,6 +216,9 @@ base_manga <- base_manga %>%
     alerta_excesivo = if_else(duration_alert == "Tiempo excesivo", 1, 0),
     alerta_corto = if_else(duration_alert == "Tiempo corto", 1, 0)
   )
+
+table(base_manga$alerta_corto, base_manga$categoria_auditoria)
+table(base_manga$alerta_excesivo, base_manga$categoria_auditoria)
 
 #### ALERTA DE MISSINGS ####
 
@@ -212,37 +300,49 @@ print(tabla_errores_por_padron)
 #---------------------------------------#
 # Valores numéricos extremos #
 #---------------------------------------#
+# 1. Lista expandida de todas las variables integer
+vars_to_check <- c("p1_06", "p1_07", "p1_08a", "p2_02", "p3_06", 
+                   "p4_01", "p4_02", "p4_03", "p4_04", "p10_03", 
+                   "p5_09", "p5_19", "p8_01")
 
-# 1. Definimos la lista de variables a las que queremos aplicar el Z-score
-vars_to_check <- c("p1_06", "p2_02", "p3_06", "p4_01", "p4_02", 
-                   "p4_03", "p4_04", "p10_03", "p5_09", "p5_19", "p8_01")
-
-# 2. Aplicamos la lógica de forma masiva
+# 2. Aplicamos lógica masiva con protección de varianza
 base_manga <- base_manga %>%
+  group_by(categoria_auditoria) %>% # Agrupamos para que la media sea justa (Efectivas vs Resto)
   mutate(across(
-    all_of(vars_to_check),
-    .fns = list(ex = ~ {
-      # Convertimos a numérico
-      val <- as.numeric(.x)
-      # Limpiamos valores especiales como -1 para que no afecten el promedio
-      clean_val <- ifelse(val == -1, NA, val)
-      
-      # Calculamos el Z-score usando la media y SD de los datos limpios
-      mu <- mean(clean_val, na.rm = TRUE)
-      sigma <- sd(clean_val, na.rm = TRUE)
-      
-      # Si el valor original es -1, no es un outlier (es una respuesta válida "NS/NR")
-      # Si no, calculamos si está a más de 3 desviaciones estándar
-      ifelse(!is.na(clean_val) & abs((clean_val - mu) / sigma) > 3, 1, 0)
-    }),
-    .names = "ex_{.col}" # Esto creará columnas tipo ex_p2_02, ex_p4_04, etc.
-  ))
+    all_of(intersect(vars_to_check, names(.))),
+    .fns = list(
+      ex = ~ {
+        val <- as.numeric(.x)
+        clean_val <- ifelse(val %in% c(-1, 98, 99), NA, val)
+        
+        mu <- mean(clean_val, na.rm = TRUE)
+        sigma <- sd(clean_val, na.rm = TRUE)
+        
+        # Lógica de Alerta:
+        # - El valor no debe ser NA
+        # - Sigma debe ser mayor a 0 (si todos pusieron lo mismo, no hay outlier)
+        # - El valor debe estar a más de 3 desviaciones estándar
+        # - El valor debe ser distinto a la media (evita errores de precisión)
+        ifelse(!is.na(sigma) & sigma > 0 & abs(val - mu) > (3 * sigma) & val != mu, 1, 0)
+      },
+      # Guardamos la media para el reporte de gestión
+      mu = ~ mean(as.numeric(ifelse(.x %in% c(-1, 98, 99), NA, .x)), na.rm = TRUE)
+    ),
+    .names = "{.fn}_{.col}" # Crea ex_p4_04 y mu_p4_04
+  )) %>%
+  ungroup()
 
-# 3. Revisar cuántas alertas se generaron por cada variable
-resumen_alertas <- base_manga %>%
-  summarise(across(starts_with("ex_"), ~ sum(.x, na.rm = TRUE)))
+# 3. Totalizar alertas numéricas
+base_manga <- base_manga %>%
+  mutate(
+    total_extremos = rowSums(across(starts_with("ex_")), na.rm = TRUE),
+    flag_extreme_values = if_else(total_extremos > 0, 1, 0)
+  )
 
-print(resumen_alertas)
+# --- VERIFICACIÓN EN CONSOLA ---
+print("Resumen de Outliers por Variable:")
+base_manga %>% summarise(across(starts_with("ex_"), ~ sum(.x, na.rm = TRUE)))
+
 
 #-----------------------#
 #  Alerta: Duplicados   #
@@ -254,7 +354,7 @@ base_manga <- base_manga %>%
     id_unico = case_when(
       status_survey == 1 ~ paste(p11_02_nombre, p11_02_apellido, p11_03a, sep = "_"),
       status_survey == 4 ~ paste(id,nombre_contacto, telefono, sep = "_"),
-      status_survey !=4 |  status_survey !=1 ~ paste(padron_pull, status_survey_resp, sep = "_"),
+      status_survey !=4 &  status_survey !=1 ~ paste(padron_pull, status_survey_resp, sep = "_"),
       TRUE ~ as.character(NA)
     )
   ) %>%
@@ -272,12 +372,6 @@ base_manga <- base_manga %>%
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
 dup <- base_manga[, c("total_dup","id", "day" ,"id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto", "key")]
 
-# Crea un vector con los id_unico que quieres eliminar
-# ids_a_borrar <- c("62165385", "62500313", "10000411", "62500338") 
-
-# Filtra el dataframe para mantener solo las filas que NO cumplen la condición
-# base_manga <- base_manga %>%
-#  filter(!(id_unico %in% ids_a_borrar))
 
 table(base_manga$total_dup)
 
@@ -343,32 +437,37 @@ distancia <- base_manga[, c("alerta_geo", "distancia_m", "status_survey_resp","g
 
 #### ALERTA NSNR ####
 
-# 1. Definimos la lista de variables que tienen opción NS/NR según tus choices
-# Incluimos ingresos, gastos, años, y objetos del hogar
-vars_nsnr <- c("p4_04", "p4_05", "p5_08", "p5_19", "p8_01", "p3_07a", 
-               "p3_07b", "p3_07c", "p3_07d", "p3_07e", "p3_07f", 
-               "p3_07g", "p3_07h", "p3_07i", "p3_07j", "p5_06", "p5_07",  "p5_11")
+# 1. Definimos la lista expandida (Aseguramos que existan en la base)
+vars_nsnr <- c( "p4_05", "p5_08", "p5_19", "p8_01", 
+               "p3_07a", "p3_07b", "p3_07c", "p3_07d", "p3_07e", 
+               "p3_07f", "p3_07g", "p3_07h", "p3_07i", "p3_07j", 
+               "p5_06", "p5_07", "p5_11")
 
-# 2. Contamos cuántos NS/NR hay por encuesta
-# En tus labels, los valores NS/NR son -1 o 98
+# --- 1. CONTEO DE NS/NR (Fuerza valores a texto para evitar fallos) ---
 base_manga <- base_manga %>%
   mutate(
-    total_nsnr = rowSums(across(all_of(vars_nsnr), ~ .x %in% c(-1, 98, 99)), na.rm = TRUE)
+    # Cuenta los NS/NR tratándolos siempre como texto
+    total_nsnr = rowSums(across(all_of(intersect(vars_nsnr, names(.))), 
+                                ~ str_trim(as.character(.x)) %in% c("-1", "98", "99")), na.rm = TRUE),
+    
+    preguntas_vistas = rowSums(!is.na(across(all_of(intersect(vars_nsnr, names(.)))))),
+    tasa_nsnr = if_else(preguntas_vistas > 0, (total_nsnr / preguntas_vistas) * 100, 0)
   )
 
-# 3. Calculamos la alerta de "Exceso de NS/NR" por grupo (Efectivas únicamente)
-# Es vital hacerlo solo en efectivas porque en las otras no se llega a esas preguntas
+# --- 2. ALERTAS (Bajamos el piso a 3 para que sea más sensible) ---
 base_manga <- base_manga %>%
-  group_by(tipo_encuesta_lbl) %>%
+  group_by(categoria_auditoria) %>%
   mutate(
-    mu_nsnr = mean(total_nsnr, na.rm = TRUE),
-    sd_nsnr = sd(total_nsnr, na.rm = TRUE),
+    mu_nsnr = mean(total_nsnr[es_efectiva == 1], na.rm = TRUE),
+    sd_nsnr = sd(total_nsnr[es_efectiva == 1], na.rm = TRUE),
     
-    # Umbral: más de 3 desviaciones estándar del promedio de NS/NR
-    umbral_nsnr = mu_nsnr + (3 * sd_nsnr),
+    # Bajamos el mínimo a 3 respuestas NS/NR para activar la alerta
+    umbral_dinamico = pmax(mu_nsnr + (3 * sd_nsnr), 3, na.rm = TRUE),
     
-    # Variable binaria de alerta
-    alerta_exceso_nsnr = if_else(efectiva == 1 & total_nsnr > umbral_nsnr, 1, 0, missing = 0)
+    alerta_exceso_nsnr = if_else(
+      es_efectiva == 1 & (total_nsnr >= umbral_dinamico | tasa_nsnr > 30), 
+      1, 0, missing = 0
+    )
   ) %>%
   ungroup()
 
@@ -391,29 +490,40 @@ vars_texto <- c("p3_03_otro",
                 "p9_02_otro")
 
 detectar_basura_vectorizada <- function(columna) {
-  # 1. Normalización inicial
+  # 1. Limpieza inicial
   texto <- str_to_lower(str_trim(columna))
-  texto <- stri_trans_general(texto, "Latin-ASCII") # Quita tildes para comparar mejor
+  texto <- stri_trans_general(texto, "Latin-ASCII")
   
-  # 2. Patrones de teclado (Vectorizado)
-  patrones_teclado <- "qwer|asdf|sdfg|dfgh|ghjk|zxcv|cvbn|vbnm|wert|tyui|uio|erwe"
+  # 2. Conteo de palabras (Separadas por espacios)
+  # str_count cuenta cuántos grupos de caracteres hay
+  num_palabras <- str_count(texto, "\\S+")
+  n_char <- nchar(texto)
+  
+  # 3. Patrones de "Teclazo" (Aumentamos a 5 caracteres para evitar falsos positivos)
+  patrones_teclado <- "qwer|asdf|sdfg|dfgh|ghjk|zxcv|cvbn|vbnm|wert|tyui|uio"
   alerta_teclado <- str_detect(texto, patrones_teclado)
   
-  # 3. Ratio de letras únicas (Vectorizado)
-  # Dividimos cantidad de caracteres únicos por longitud total
+  # 4. Análisis de calidad
   letras_unicas <- sapply(str_split(texto, ""), function(x) length(unique(x)))
-  ratio_unicas <- letras_unicas / nchar(texto)
+  ratio_unicas <- letras_unicas / n_char
   
-  # 4. Estructura lingüística (Consonantes seguidas y falta de vocales)
-  consonantes_seguidas <- str_detect(texto, "[bcdfghjklmnpqrstvwxyz]{3,}")
+  consonantes_seguidas <- str_detect(texto, "[bcdfghjklmnpqrstvwxyz]{4,}") # Subimos a 4
   sin_vocales <- !str_detect(texto, "[aeiou]")
   
-  # Lógica de decisión combinada (vectorizada)
+  # --- LÓGICA DE DECISIÓN REFINADA ---
   resultado <- case_when(
+    # SI TIENE 3 O MÁS PALABRAS, asumimos que es una observación válida (indulto)
+    num_palabras >= 3 ~ 0,
+    
+    # Si está vacío o es NA
+    is.na(texto) | texto == "" ~ 0,
+    
+    # Reglas de basura para textos cortos (1 o 2 palabras)
     alerta_teclado ~ 1,
-    ratio_unicas < 0.45 & nchar(texto) > 3 ~ 1, # Ejemplo: "aaaaa" o "ababab"
-    sin_vocales & nchar(texto) >= 3 ~ 1,
-    consonantes_seguidas & nchar(texto) > 4 ~ 1,
+    ratio_unicas < 0.35 & n_char > 5 ~ 1,  # Ej: "aaaaaaaaa"
+    sin_vocales & n_char >= 4 ~ 1,         # Ej: "pndx" (muy corto sin vocales)
+    consonantes_seguidas & n_char > 5 ~ 1, # Ej: "dsfghj"
+    
     TRUE ~ 0
   )
   
@@ -504,9 +614,34 @@ base_manga <- base_manga %>%
   )
 
 
-base_manga <- base_manga %>%
+base_manga_clear <- base_manga %>%
   select(!starts_with("m_"))
-base_manga <- base_manga %>%
+base_manga_clear <- base_manga_clear %>%
   select(!starts_with("s_"))
-base_manga <- base_manga %>%
+base_manga_clear <- base_manga_clear %>%
   select(!starts_with("ex_"))
+base_manga_clear <- base_manga_clear %>%
+  select(!starts_with("trash_"))
+
+# Generamos el resumen agrupado por día con las variables correctas
+resumen_diario_vertical <- base_manga %>%
+  filter(encuesta_final == 1) %>% 
+  group_by(day) %>%
+  summarise(
+    `Total Manzanas`          = n_distinct(manzana_pull),
+    `Encuestas Efectivas`     = sum(es_efectiva, na.rm = TRUE),
+    `Rechazos`                = sum(es_rechazo, na.rm = TRUE),
+    `No Elegibles (Cierres)`  = sum(es_no_elegible, na.rm = TRUE),
+    `Agendadas (Pendientes)`  = sum(es_agendada, na.rm = TRUE),
+    `Sin Colector (Frentista)`= sum(p1_01 == 2, na.rm = TRUE),
+    `Alertas de GPS (>10m)`   = sum(flag_geofencing, na.rm = TRUE),
+    `Alertas Texto Basura`    = sum(flag_texto_basura, na.rm = TRUE)
+  ) %>%
+  pivot_longer(
+    cols = -day, 
+    names_to = "Indicador", 
+    values_to = "Valor"
+  ) %>%
+  arrange(desc(day))
+
+print(resumen_diario_vertical)
