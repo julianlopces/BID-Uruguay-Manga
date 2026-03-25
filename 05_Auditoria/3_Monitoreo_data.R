@@ -1,7 +1,7 @@
 
 
 # 1. LEER CASE MANAGEMENT Y ENUMERATORS
-url_case_management <- "https://docs.google.com/spreadsheets/d/1sTN_sAiAoEGg30Y5Y2pC382ZVs5lD3WlFzWLPReuMsU/edit?gid=179862683#gid=179862683"
+url_case_management <- "https://docs.google.com/spreadsheets/d/1qAtDSHtNwFmmxp3HWp4nNe64ic3YTY2pP9cl3E50CTc/edit?gid=1160660477#gid=1160660477"
 case_management <- read_sheet(url_case_management)
 
 url_enumerators <- "https://docs.google.com/spreadsheets/d/1YcafSQeOn0183FXhMjHj8n6Nrebpc3BbIbgadFstPDU/edit?gid=0#gid=0"
@@ -10,6 +10,24 @@ enumerators_tab <- read_sheet(url_enumerators)
 
 # 1. PREPARAR META ÚNICA POR TÉCNICO
 ####################################################
+
+# 1.1 PROCESAR META (ASIGNACIÓN)
+# Ahora agrupamos por Técnico y Manzana para tener la meta clara
+meta_resumen <- case_management %>%
+  # Limpieza de nombres para el join
+  mutate(users.x = str_trim(as.character(enumerators))) %>%
+  inner_join(enumerators_tab, by = c("users.x" = "id")) %>%
+  filter(users.y != "not_yet") %>%
+  group_by(
+    Manzana = name,
+    Tecnico = enumerator_name, # Este es el responsable del equipo/manzana
+    Supervisor = supervisor
+  ) %>%
+  summarise(
+    Padrones_Asignados = n_distinct(padron, na.rm = TRUE),
+    .groups = "drop"
+  )
+
 # Colapsamos las manzanas y sumamos padrones para evitar duplicados en el join
 meta_tecnico_consolidada <- meta_resumen %>%
   group_by(Tecnico) %>%
@@ -57,7 +75,7 @@ consolidado_final_manga <- base_manga %>%
     `Manzanas` = Manzanas_Listado, # Ahora sí existe porque la creamos en meta_tecnico_consolidada
     `Metas (Asignados)` = Total_Asignados,
     `EFECTIVAS CON ALERTA` = EFECTIVAS,
-    `EFECTIVAS CON ALERTA` = EFECTIVAS_CON_ALERTA,
+    `EFECTIVAS` = EFECTIVAS_CON_ALERTA,
     RECHAZOS,
     NO_ELEGIBLES,
     AGENDADAS,
@@ -74,10 +92,6 @@ print(consolidado_final_manga)
 ####################################################
 id_sheet <- "https://docs.google.com/spreadsheets/d/1my_dgomVoXUI8ADPGIV8WyYek1qQtFuVsO_lvKxDhLY/edit"
 
-# Escribir la nueva tabla multinivel
-sheet_write(consolidado_final_manga, ss = id_sheet, sheet = "Consolidado_Tecnico_Encuestador")
-
-
 
 # --- PASO A: Detalle de Texto Basura ---
 # --- 1. DICCIONARIO DE ETIQUETAS (Para que el reporte sea legible) ---
@@ -91,6 +105,8 @@ diccionario_nombres <- ODK_filtrado %>%
     label = case_when(
       name == "p5_19" ~ "5,19 ¿Cuánto gasta en saneamiento?",
       name == "p4_04" ~ "4,04 Ingresos mensuales del hogar",
+      name == "p1_06" ~ "1,06 ¿Cuantas viviendas hay en este padrón?",
+      name == "p5_11" ~ "5,11 ¿a quién solicitó el vaciado ",
       TRUE ~ label
     ),
     # 3. Cortamos el texto para que no desborde en Looker
@@ -99,6 +115,29 @@ diccionario_nombres <- ODK_filtrado %>%
   # Evitamos duplicados si la variable aparece varias veces en el ODK
   group_by(name) %>% 
   summarise(label = first(label), .groups = "drop")
+
+# --- PASO A: Detalle de Texto Basura ---
+detalle_basura_manga <- base_manga %>%
+  filter(flag_texto_basura == 1) %>%
+  select(key, all_of(intersect(vars_texto, names(.))), starts_with("trash_")) %>%
+  tidyr::pivot_longer(cols = all_of(intersect(vars_texto, names(.))), names_to = "pregunta", values_to = "texto_escrito") %>%
+  tidyr::pivot_longer(cols = starts_with("trash_"), names_to = "pregunta_trash", values_to = "es_basura") %>%
+  filter(es_basura == 1, paste0("trash_", pregunta) == pregunta_trash) %>%
+  group_by(key) %>%
+  summarise(texto_detalle_trash = paste0(pregunta, ": '", texto_escrito, "'", collapse = " | "), .groups = "drop")
+
+# --- PASO EXTRA: Detalle para la Tabla de Gestión ---
+# Esto sirve para que el supervisor vea qué preguntas fueron marcadas como NS/NR
+detalle_nsnr_manga <- base_manga %>%
+  filter(flag_nsnr == 1) %>%
+  select(key, all_of(intersect(vars_nsnr, names(.)))) %>%
+  tidyr::pivot_longer(cols = -key, names_to = "pregunta", values_to = "valor") %>%
+  filter(valor %in% c(-1, 98, 99, "-1", "98", "99")) %>%
+  group_by(key) %>%
+  summarise(
+    lista_nsnr = paste(pregunta, collapse = ", "),
+    .groups = "drop"
+  )
 
 # --- 2. DETALLE DE OUTLIERS CON LABELS ---
 detalle_extremos_manga <- base_manga %>%
@@ -112,13 +151,39 @@ detalle_extremos_manga <- base_manga %>%
   group_by(key) %>%
   summarise(detalle_outliers = paste0(pregunta_limpia, ": [", valor, "]", collapse = " | "), .groups = "drop")
 
+# --- 4. DETALLE DE MISSINGS CON LABELS ---
+detalle_missings_manga <- base_manga %>%
+  # Filtramos encuestas que tengan al menos un missing detectado
+  filter(total_missing > 0) %>% 
+  # Seleccionamos el KEY y todas las columnas que empiezan con "m_"
+  select(key, all_of(variables_missing)) %>%
+  # Pasamos a formato largo para identificar CUÁL es el missing
+  tidyr::pivot_longer(
+    cols = all_of(variables_missing), 
+    names_to = "name_m", 
+    values_to = "es_missing"
+  ) %>%
+  # Nos quedamos solo con las filas donde efectivamente hay un missing (valor 1)
+  filter(es_missing == 1) %>%
+  # Limpiamos el nombre (m_p5_11 -> p5_11) para cruzar con el diccionario
+  mutate(name = gsub("^m_", "", name_m)) %>%
+  left_join(diccionario_nombres, by = "name") %>% 
+  # Si no hay label en el diccionario, usamos el nombre técnico
+  mutate(pregunta_limpia = if_else(!is.na(label), label, name)) %>%
+  group_by(key) %>%
+  summarise(
+    detalle_missings = paste0("🚫 Faltante: ", pregunta_limpia, collapse = " | "), 
+    .groups = "drop"
+  )
+
 # --- 3. CONSTRUCCIÓN DE LA TABLA DE GESTIÓN ---
 tabla_gestion_manga <- base_manga %>%
   sf::st_drop_geometry() %>% 
-  filter(Alerta_Auditoria == 1) %>%
+  filter(Alerta_Auditoria == 1 & categoria_auditoria == "EFECTIVA" ) %>%
   left_join(detalle_basura_manga, by = "key") %>%
   left_join(detalle_extremos_manga, by = "key") %>%
-  left_join(detalle_nsnr_manga, by = "key") %>% # Usamos el que tiene los labels de NSNR
+  left_join(detalle_nsnr_manga, by = "key") %>% 
+  left_join(detalle_missings_manga, by = "key") %>% # <--- El que acabamos de crear
   mutate(
     # Componentes individuales con iconos
     geo   = if_else(flag_geofencing == 1, paste0("📍 GPS: ", round(distancia_m, 0), "m fuera"), NA_character_),
@@ -126,10 +191,12 @@ tabla_gestion_manga <- base_manga %>%
     trash = if_else(flag_texto_basura == 1, paste0("🗑️ Basura: ", texto_detalle_trash), NA_character_),
     nsnr  = if_else(flag_nsnr == 1, paste0("❓ NS/NR: ", lista_nsnr), NA_character_),
     out   = if_else(flag_extreme_values == 1, paste0("📈 Valor: ", detalle_outliers), NA_character_),
-    dup   = if_else(flag_duplicated == 1, "👥 DUPLICADO", NA_character_)
-  ) %>%
+    dup   = if_else(flag_duplicated == 1, "👥 DUPLICADO", NA_character_),
+    # NUEVO: Detalle de Missings
+    miss  = if_else(flag_missing == 1, detalle_missings, NA_character_)
+    ) %>%
   # Unión limpia de alertas
-  unite("Alertas_Final", geo, time, trash, nsnr, out, dup, sep = " | ", na.rm = TRUE) %>%
+  unite("Alertas_Final", geo, time, trash, nsnr, out, dup, miss, sep = " | ", na.rm = TRUE) %>%
   mutate(
     # Semáforo de criticidad
     Status = case_when(
@@ -153,18 +220,22 @@ tabla_gestion_manga <- base_manga %>%
     Supervisor = supervisor_pull,
     Tecnico = tecnico_pull,
     Encuestador = ident_enc_resp,
+    Manzana = manzana_pull,
     Padron = padron_pull,
     `Tipo de encuesta` = categoria_auditoria,
-    `Grupo` = grupo_experimento,
-    `Alertas Detalladas` = Alertas_Final,
     Accion,
+    `Alertas Detalladas` = Alertas_Final,
   ) %>%
-  arrange(Accion, desc(`Tipo de encuesta`))
+  arrange(`Alertas Detalladas`, desc(`Tipo de encuesta`))
 
 # --- EXPORTACIÓN ---
 sheet_write(tabla_gestion_manga, ss = id_sheet, sheet = "Tabla_Gestion_Alertas")
 
-
+base_manga_clear <- base_manga_clear %>%
+  left_join(detalle_basura_manga, by = "key") %>%
+  left_join(detalle_extremos_manga, by = "key") %>%
+  left_join(detalle_nsnr_manga, by = "key") %>% 
+  left_join(detalle_missings_manga, by = "key")
 
 # 1. Crear la base específica para la Arquitecta
 base_revision_arqui <- base_manga %>%
@@ -194,123 +265,178 @@ base_revision_arqui <- base_manga %>%
 sheet_write(base_revision_arqui, ss = id_sheet, sheet = "Supervisión esquemas funcionales") 
 
 
-
 ####################################################
-# REPORTE DE AVANCE ESTRATÉGICO POR MANZANA (FIX)
+# REPORTE DE AVANCE DE MANZANA: LÓGICA DE CIERRE Y AUDITORÍA
 ####################################################
 
-# 1. Preparar la Meta a nivel de Manzana (Limpieza de texto)
+# 1. Preparar la Meta (Aseguramos formato "Manzana X")
 meta_manzana <- case_management %>%
   mutate(users_id = str_trim(as.character(enumerators))) %>%
   inner_join(enumerators_tab, by = c("users_id" = "id")) %>%
-  mutate(Manzana = str_trim(as.character(name))) %>% # Limpiamos espacios
+  # Forzamos limpieza y formato "Manzana 1"
+  mutate(Manzana = str_trim(as.character(name))) %>% 
   group_by(Manzana) %>%
   summarise(
     Padrones_Totales = n_distinct(padron, na.rm = TRUE),
-    enumerators = first(enumerators),
     .groups = "drop"
   )
 
-# 2. Resumen de trabajo real (Formateamos el pull para que diga "Manzana X")
+# 1. Resumen de trabajo real (Separando Éxito de Alertas)
 trabajo_manzana <- base_manga %>%
   mutate(
-    # Si manzana_pull trae solo el número "1", le pegamos "Manzana "
-    # Si ya trae la palabra, str_replace asegura que no se duplique
     num_manzana = str_extract(manzana_pull, "\\d+"),
     Manzana = paste("Manzana", num_manzana)
   ) %>%
   group_by(Manzana) %>%
   summarise(
-    EFECTIVAS    = sum(categoria_auditoria == "EFECTIVA", na.rm = TRUE),
-    RECHAZOS     = sum(categoria_auditoria == "RECHAZO", na.rm = TRUE),
-    NO_ELEGIBLES = sum(categoria_auditoria == "NO ELEGIBLE", na.rm = TRUE),
-    AGENDADAS    = sum(categoria_auditoria == "AGENDADA/PENDIENTE", na.rm = TRUE),
+    # --- MÉTRICAS DE CIERRE (Solo con ÉXITO) ---
+    EFECTIVAS    = sum(categoria_auditoria == "EFECTIVA" & Exito_Auditoria == 1, na.rm = TRUE),
+    RECHAZOS     = sum(categoria_auditoria == "RECHAZO" & Exito_Auditoria == 1, na.rm = TRUE),
+    NO_ELEGIBLES = sum(categoria_auditoria == "NO ELEGIBLE" & Exito_Auditoria == 1, na.rm = TRUE),
+    AGENDADAS    = sum(categoria_auditoria == "AGENDADA/PENDIENTE" & Exito_Auditoria == 1, na.rm = TRUE),
+    
+    # --- MÉTRICA DE ESFUERZO FÍSICO (Independiente de alertas) ---
+    TOTAL_VISITADOS_FISICOS = n_distinct(padron_pull, na.rm = TRUE),
+    
+    # --- MÉTRICA DE ALERTAS ---
+    ENCUESTAS_EN_REVISION = sum(Alerta_Auditoria == 1 & categoria_auditoria != "AGENDADA/PENDIENTE" , na.rm = TRUE),
+    
     Equipos_Intervencion = paste(unique(paste0(tecnico_pull, " + ", ident_enc_resp)), collapse = " | "),
+    SUPERVISOR_Intervencion = first(supervisor_pull),
     .groups = "drop"
   )
 
-####################################################
-# REPORTE DE INTELIGENCIA TERRITORIAL POR MANZANA (FIXED)
-####################################################
-
+# 2. Consolidado Final con Reglas de Status
 avance_manzana_pro <- meta_manzana %>%
   left_join(trabajo_manzana, by = "Manzana") %>%
-  # 1. Limpieza de datos (NAs a 0)
-  mutate(across(c(EFECTIVAS, RECHAZOS, NO_ELEGIBLES, AGENDADAS), ~ coalesce(.x, 0))) %>%
+  mutate(across(c(EFECTIVAS, RECHAZOS, NO_ELEGIBLES, AGENDADAS, ENCUESTAS_EN_REVISION, TOTAL_VISITADOS_FISICOS), ~ coalesce(.x, 0))) %>%
   
-  # 2. Conteo de Status Específicos para Alertas
+  # Cruce con datos temporales y específicos de status
   left_join(
     base_manga %>%
       mutate(Manzana_join = paste("Manzana", str_extract(manzana_pull, "\\d+"))) %>%
       group_by(Manzana = Manzana_join) %>%
       summarise(
-        Status_9 = sum(status_num == 9, na.rm = TRUE),  # Sin red
-        Status_10 = sum(status_num == 10, na.rm = TRUE), # >10 viviendas
-        Status_2 = sum(status_num == 2, na.rm = TRUE),   # Ausentes
-        Ultima_Visita = max(as.Date(submission_date), na.rm = TRUE), # Levantamos fecha
+        Status_9 = sum(status_num == 9, na.rm = TRUE),
+        Status_10 = sum(status_num == 10, na.rm = TRUE),
+        Ultima_Visita = max(as.Date(submission_date), na.rm = TRUE),
         .groups = "drop"
       ), by = "Manzana"
   ) %>%
   mutate(across(starts_with("Status_"), ~ coalesce(.x, 0))) %>%
   
-  # 3. Cálculos de Base y Porcentajes
+  # 3. Cálculos de Porcentajes y Status
   mutate(
-    VISITADOS = EFECTIVAS + RECHAZOS + NO_ELEGIBLES + AGENDADAS,
-    NO_VISITADOS = Padrones_Totales - VISITADOS,
+    # No visitado real: Padrón que nunca fue tocado
+    NO_VISITADOS = pmax(0, Padrones_Totales - TOTAL_VISITADOS_FISICOS),
+    PERC_RECORRIDO = round((TOTAL_VISITADOS_FISICOS / Padrones_Totales) * 100, 1),
     
-    # Calculamos la variable de avance primero para que el case_when la encuentre
-    AVANCE_TOTAL_PERC = round((VISITADOS / Padrones_Totales) * 100, 1),
+    # Avance Real: Solo casos cerrados y limpios
+    CASOS_CERRADOS_LIMPIOS = EFECTIVAS + RECHAZOS + NO_ELEGIBLES,
+    PERC_AVANCE_REAL = round((CASOS_CERRADOS_LIMPIOS / Padrones_Totales) * 100, 1),
     
-    # Porcentajes detallados
-    PERC_EFECTIVAS    = round((EFECTIVAS / Padrones_Totales) * 100, 1),
-    PERC_NO_VISITADO  = round((NO_VISITADOS / Padrones_Totales) * 100, 1),
-    PERC_RECHAZOS     = round((RECHAZOS / Padrones_Totales) * 100, 1),
-    
-    # 4. Lógica de Alertas de Negocio
-    Alerta_Sin_Red = if_else(Status_9 / Padrones_Totales > 0.50, "🚨 CRÍTICO: Sin Red (>50%)", NA_character_),
-    Alerta_Densidad = if_else(Status_10 / Padrones_Totales > 0.40, "🏢 ALTA DENSIDAD (>40%)", NA_character_),
-    Alerta_Ausentismo = if_else(Status_2 / pmax(VISITADOS, 1) > 0.30, "🏃 ALTO AUSENTISMO", NA_character_),
-    
-    # Calculamos días de inactividad (Sugerencia extra)
     Dias_Inactiva = as.numeric(Sys.Date() - Ultima_Visita),
     
-    # 5. SEMÁFORO ESTRATÉGICO (Corregido)
+    # 4. SEMÁFORO ESTRATÉGICO (Reglas actualizadas)
     Semaforo = case_when(
-      Status_9 / Padrones_Totales > 0.50 ~ "⚫ SIN RED (Descartar)",
-      (RECHAZOS + Status_2) / pmax(VISITADOS, 1) > 0.40 ~ "🔴 COMPLICADA (Rechazo/Ausentes)",
-      Status_10 / Padrones_Totales > 0.40 ~ "🟣 EDIFICIOS (Carga especial)",
-      Dias_Inactiva > 4 & AVANCE_TOTAL_PERC < 100 ~ "🔥 CONGELADA (Sin visitas)",
-      AVANCE_TOTAL_PERC > 80 ~ "🟢 ENCAMINADA (Finalizando)",
-      AVANCE_TOTAL_PERC > 40 ~ "🟡 EN PROCESO",
-      TRUE ~ "⚪ INICIO / BAJO AVANCE"
+      # REGLA ORO: Si ya no hay No Visitados pero hay alertas
+      NO_VISITADOS == 0 & ENCUESTAS_EN_REVISION > 0 ~ "🔍 PENDIENTE AUDITORÍA",
+      
+      # Si ya no hay nada pendiente de ningún tipo
+      PERC_AVANCE_REAL >= 100 & ENCUESTAS_EN_REVISION == 0 ~ "🟢 COMPLETA",
+      
+      # Si no se ha movido nada
+      TOTAL_VISITADOS_FISICOS == 0 ~ "⚪ SIN EMPEZAR",
+      
+      # Si pasaron más de 4 días
+      Dias_Inactiva > 4 & NO_VISITADOS > 0 ~ "🔥 MANZANA INACTIVA",
+      
+      # Recorrida al 100 pero con agendadas (limpias)
+      PERC_RECORRIDO >= 100 & AGENDADAS > 0 ~ "🟡 REVISITAR (Pendientes)",
+      
+      # En proceso normal
+      TRUE ~ "🔵 EN PROCESO"
+    ),
+    
+    Alertas_Manzana = paste0(
+      if_else(Status_9 / Padrones_Totales > 0.50, "🚨 Mayoria Sin Red", ""),
+      if_else(ENCUESTAS_EN_REVISION > 0, paste0(" | 🔍 ", ENCUESTAS_EN_REVISION, " alertas"), ""),
+      sep = ""
     )
   ) %>%
-  unite("Alertas_Manzana", Alerta_Sin_Red, Alerta_Densidad, Alerta_Ausentismo, sep = " | ", na.rm = TRUE) %>%
   
-  # 6. Selección Final con Nombres Claros para Looker
+  # 5. Selección y Orden
   select(
-    Semaforo,
     Manzana,
     `Padrones Totales` = Padrones_Totales,
     `No Visitados` = NO_VISITADOS,
-    `% No Visitado` = PERC_NO_VISITADO,
     EFECTIVAS,
-    `% Efectividad` = PERC_EFECTIVAS,
     RECHAZOS,
-    `% Rechazo` = PERC_RECHAZOS,
     NO_ELEGIBLES,
     AGENDADAS,
+    `Alertas de Auditoría` = ENCUESTAS_EN_REVISION,
+    `% Recorrido` = PERC_RECORRIDO,
+    `% Avance real` = PERC_AVANCE_REAL,
     Alertas_Manzana,
     `Días Inactiva` = Dias_Inactiva,
+    `Supervisor` = SUPERVISOR_Intervencion,
     `Equipos` = Equipos_Intervencion,
-    `% Avance Total` = AVANCE_TOTAL_PERC
+    Semaforo
   ) %>%
-  arrange(Semaforo, desc(`% Avance Total`))
+  arrange(desc(`% Recorrido`), Semaforo)
 
 # --- EXPORTACIÓN ---
 sheet_write(avance_manzana_pro, ss = id_sheet, sheet = "Avance_Inteligente_Manzana")
 
-# --- EXPORTACIÓN ---
-sheet_write(avance_manzana_final, ss = id_sheet, sheet = "Avance_por_Manzana")
-
 print("Reporte de avance por manzana generado con éxito.")
+
+####################################################
+# CONSOLIDADO INTEGRAL: PRODUCTIVIDAD, ESQUEMAS Y ALERTAS
+####################################################
+
+consolidado_detallado_final <- base_manga %>%
+  group_by(
+    Tecnico = tecnico_pull, 
+    Encuestador = ident_enc_resp
+  ) %>% 
+  summarise(
+    # --- 1. ESTADO DE AVANCE (Encuestas Finales) ---
+    Total_Padrones = n(),
+    EFECTIVAS     = sum(categoria_auditoria == "EFECTIVA", na.rm = TRUE),
+    RECHAZOS      = sum(categoria_auditoria == "RECHAZO", na.rm = TRUE),
+    NO_ELEGIBLES  = sum(categoria_auditoria == "NO ELEGIBLE", na.rm = TRUE),
+    AGENDADAS     = sum(categoria_auditoria == "AGENDADA/PENDIENTE", na.rm = TRUE),
+    
+    # --- 2. MÉTRICAS DE TIEMPO (Solo Efectivas para no sesgar) ---
+    Minutos_Promedio = round(mean(duration_min[es_efectiva == 1], na.rm = TRUE), 1),
+    
+    # --- 3. PRODUCTOS TÉCNICOS (Esquemas) ---
+    Esquemas_Simples_Ok   = sum(es_efectiva == 1 & grupo_3 == 1 & p10_13 == 1, na.rm = TRUE),
+    Esquemas_Detallados_Ok = sum(es_efectiva == 1 & grupo_4 == 1 & p10_13 == 1, na.rm = TRUE),
+  
+    
+    # --- 4. DESGLOSE DE ALERTAS (SOLO PARA EFECTIVAS) ---
+    # Aquí mapeamos cada flag que creamos en el flujo de auditoría
+    Alertas_GPS    = sum(es_efectiva == 1 & flag_geofencing == 1, na.rm = TRUE),
+    Alertas_Tiempo = sum(es_efectiva == 1 & flag_duration_outlier == 1, na.rm = TRUE),
+    Alertas_Basura = sum(es_efectiva == 1 & flag_texto_basura == 1, na.rm = TRUE),
+    Alertas_NSNR   = sum(es_efectiva == 1 & flag_nsnr == 1, na.rm = TRUE),
+    Alertas_Outlier_Num = sum(es_efectiva == 1 & flag_extreme_values == 1, na.rm = TRUE),
+    Alertas_Duplicados  = sum(es_efectiva == 1 & flag_duplicated == 1, na.rm = TRUE),
+    Alertas_missings  = sum(es_efectiva == 1 & flag_missing == 1, na.rm = TRUE),
+    
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Indicador de calidad: % de encuestas efectivas que tienen al menos una alerta
+    Tasa_Error_Efectivas = round(((Alertas_GPS + Alertas_Tiempo + Alertas_Basura + 
+                                     Alertas_NSNR + Alertas_Outlier_Num) / EFECTIVAS) * 100, 1)
+  ) %>%
+  # Limpiar posibles NaNs si no hay efectivas todavía
+  mutate(across(where(is.numeric), ~ ifelse(is.nan(.), 0, .))) %>%
+  arrange(desc(EFECTIVAS))
+
+# --- EXPORTACIÓN ---
+sheet_write(consolidado_detallado_final, ss = id_sheet, sheet = "Consolidado_Productividad_Alertas")
+
+print("Consolidado detallado generado y exportado a Google Sheets.")

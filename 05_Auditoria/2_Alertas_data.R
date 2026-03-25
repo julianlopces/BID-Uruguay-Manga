@@ -24,11 +24,18 @@ print(paste("Encuestas eliminadas por blacklist:", length(ids_a_eliminar)))
 base_manga <- base_manga %>%
   filter(!(day == "Mar 23, 2026"))
 
+base_manga_prueba <- base_manga %>%
+  filter((day == "Mar 20, 2026"))
+
 # --- DICCIONARIO DE CORRECCIONES MANUALES ---
 # Agrega aquí cualquier KEY que necesite corrección de ID
 correcciones_manuales <- tribble(
   ~key,                                         ~id_correcto,
   "uuid:9029d292-00c6-4fc4-b59e-c8a5ffdc7c4d",  "164079",
+  "uuid:6fcf248c-e508-4282-b79d-db65c3487d5d", "129432",
+  "uuid:8dfc622e-a716-4c7c-af15-7d70c73ebadc", "156050",
+  "uuid:12bddf70-2967-4362-92aa-e69457e2db6d", "156073"
+  
 )
 
 # --- APLICACIÓN AUTOMÁTICA DE CORRECCIONES ---
@@ -51,6 +58,7 @@ print(paste("Correcciones manuales aplicadas:", nrow(correcciones_manuales)))
 correcciones_status <- tribble(
   ~key,                                         ~status_nuevo,
   "uuid:a95eef92-c5a1-40af-9c84-41fbfb5332ec",  5, # Código 5 = RECHAZO
+  "uuid:d7496e5f-d6e7-4dbf-80c0-142d38344efb", 5,
 )
 
 # --- APLICACIÓN DE CORRECCIONES DE STATUS ---
@@ -80,6 +88,12 @@ base_manga <- base_manga %>%
     submission_date = submission_date - hours(3)
   ) %>%
   filter(submission_date >= ymd("2026-02-27"))
+
+base_manga <- base_manga %>%
+  mutate(p1_06 = coalesce(p1_06, p1_08a),
+         p1_08_resp = coalesce(p1_08_resp, p1_08_sel_resp))
+
+variables2 <-  base_manga %>% select(p1_06, status_survey_resp)
 
 # --- FLUJO PRINCIPAL DE AUDITORÍA ---
 # 2. CLASIFICACIÓN DE AUDITORÍA (CORREGIDO)
@@ -127,6 +141,7 @@ otro <- base_manga %>%
   filter(encuesta_final==0 & categoria_auditoria == "EFECTIVA" )
 
 
+
 # Suponiendo que tu base se llama base_manga y la columna de texto es comentarios_pub
 base_manga <- base_manga %>%
   mutate(
@@ -165,6 +180,42 @@ table(base_manga$categoria_comentario)
 coment <- base_manga %>%
   select(pub_comentario, categoria_comentario)
 
+# --- ANÁLISIS DE PADRONES CON MÚLTIPLES OBSERVACIONES Y ALERTAS COMPLETAS ---
+analisis_duplicados <- base_manga %>%
+  group_by(padron_pull) %>%
+  # 1. Filtramos solo padrones que aparecen más de una vez
+  filter(n() > 1) %>%
+  # 2. Ordenamos cronológicamente
+  arrange(padron_pull, submission_date) %>%
+  mutate(
+    # Lógica de detección de cierre previo
+    cierre_previo = lag(cumany(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE"))),
+    cierre_previo = coalesce(cierre_previo, FALSE),
+    
+    alerta_auditoria = case_when(
+      cierre_previo & !(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE")) ~ "⚠️ REVISITAR TRAS CIERRE",
+      cierre_previo & (categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE")) ~ "⚠️ DOBLE CIERRE",
+      TRUE ~ "Seguimiento normal"
+    )
+  ) %>%
+  # 3. FILTRO CRÍTICO: Si el padrón tiene ALGUNA alerta, mostramos TODAS sus visitas
+  filter(any(str_detect(alerta_auditoria, "⚠️"))) %>%
+  ungroup() %>%
+  
+  # 4. Selección de columnas
+  select(
+    padron      = padron_pull,
+    status      = categoria_auditoria,
+    comentario  = pub_comentario,
+    fecha_envio = submission_date,
+    alerta      = alerta_auditoria,
+    tecnico_pull,
+    grupo_experimento,
+    p11_02_nombre,
+    p2_02,
+    key
+  )
+
 
 # Esto debería darte exactamente 1 por cada padrón único
 check_unicos <- base_manga %>% 
@@ -178,8 +229,12 @@ if(nrow(check_unicos) == 0) {
   print("Ojo: Hay padrones duplicados aún. Revisar datos de origen.")
 }
 
+
 base_manga <- base_manga %>%
   filter(encuesta_final==1)
+
+base_manga_A <- base_manga %>%
+  filter(day == "22")
 
 #### Alertas ####
 #---------------#
@@ -196,7 +251,7 @@ base_manga <- base_manga %>%
     
     # Definir umbrales dinámicos por grupo
     umbral_corto = media_grupo - (3 * sd_grupo),
-    umbral_excesivo = media_grupo + (3 * sd_grupo),
+    umbral_excesivo = media_grupo + (5 * sd_grupo),
     
     # Crear alertas binarias
     alerta_corto = if_else(duration_min < umbral_corto, 1, 0, missing = 0),
@@ -268,19 +323,19 @@ base_manga <- base_manga |>
     total_saltos = rowSums(dplyr::pick(dplyr::all_of(variables_saltos)), na.rm = TRUE)
   )
 
-library(dplyr)
-library(tidyr)
-
 # 1. Identificamos todas las columnas que empiezan con m_ o s_
 variables_audit <- names(base_manga)[grepl("^[ms]_", names(base_manga))]
+
+base_manga <- base_manga %>%
+  mutate(s_status_survey = 0)
 
 # 2. Creamos la tabla de "Hallazgos"
 tabla_errores_por_padron <- base_manga |>
   # Seleccionamos el ID y las columnas de flags
-  dplyr::select(padron_pull, dplyr::all_of(variables_audit)) |>
+  dplyr::select(padron_pull, day, formdef_version, dplyr::all_of(variables_audit)) |>
   # Pasamos a formato largo: una fila por cada variable con flag
   tidyr::pivot_longer(
-    cols = -padron_pull,
+    cols = -c(padron_pull, day, formdef_version),
     names_to = "variable_con_problema",
     values_to = "valor"
   ) |>
@@ -297,17 +352,22 @@ tabla_errores_por_padron <- base_manga |>
 # 3. Ver el resultado
 print(tabla_errores_por_padron)
 
+# Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
+missing <- base_manga |>
+  filter(m_p5_11 == 1)
+print(missing)
+
+
 #---------------------------------------#
 # Valores numéricos extremos #
 #---------------------------------------#
 # 1. Lista expandida de todas las variables integer
-vars_to_check <- c("p1_06", "p1_07", "p1_08a", "p2_02", "p3_06", 
-                   "p4_01", "p4_02", "p4_03", "p4_04", "p10_03", 
+vars_to_check <- c("p1_06", "p1_07", "p2_02", "p3_06", 
+                   "p4_01", "p10_03", 
                    "p5_09", "p5_19", "p8_01")
 
 # 2. Aplicamos lógica masiva con protección de varianza
 base_manga <- base_manga %>%
-  group_by(categoria_auditoria) %>% # Agrupamos para que la media sea justa (Efectivas vs Resto)
   mutate(across(
     all_of(intersect(vars_to_check, names(.))),
     .fns = list(
@@ -339,9 +399,59 @@ base_manga <- base_manga %>%
     flag_extreme_values = if_else(total_extremos > 0, 1, 0)
   )
 
-# --- VERIFICACIÓN EN CONSOLA ---
-print("Resumen de Outliers por Variable:")
-base_manga %>% summarise(across(starts_with("ex_"), ~ sum(.x, na.rm = TRUE)))
+####################################################
+# RESUMEN ESTADÍSTICO Y AUDITORÍA POR PREGUNTA
+####################################################
+
+resumen_preguntas_criticas <- base_manga %>%
+  # 1. Seleccionamos solo las variables numéricas y los identificadores necesarios
+  select(tecnico_pull, all_of(intersect(vars_to_check, names(.)))) %>%
+  
+  # 2. Pasamos a formato largo (una fila por cada respuesta de cada técnico)
+  pivot_longer(
+    cols = -tecnico_pull, 
+    names_to = "Pregunta", 
+    values_to = "Valor"
+  ) %>%
+  
+  # 3. Limpiamos valores especiales (-1, 98, 99) para que no ensucien la media
+  mutate(valor_limpio = ifelse(Valor %in% c(-1, 98, 99), NA, as.numeric(Valor))) %>%
+  
+  # 4. Agrupamos por Pregunta para calcular estadísticas y detectar al "peor" encuestador
+  group_by(Pregunta) %>%
+  summarise(
+    Media = round(mean(valor_limpio, na.rm = TRUE), 2),
+    Minimo = min(valor_limpio, na.rm = TRUE),
+    Maximo = max(valor_limpio, na.rm = TRUE),
+    
+    # Calculamos el técnico con más alertas para ESTA pregunta específica
+    # Nota: Usamos la lógica de 3 desviaciones estándar (Outliers)
+    Tecnico_Mas_Alertas = {
+      mu <- mean(valor_limpio, na.rm = TRUE)
+      sigma <- sd(valor_limpio, na.rm = TRUE)
+      
+      # Creamos un df temporal interno para contar por técnico
+      tibble(tecnico_pull, valor_limpio) %>%
+        mutate(es_outlier = if_else(!is.na(sigma) & sigma > 0 & abs(valor_limpio - mu) > (3 * sigma), 1, 0)) %>%
+        group_by(tecnico_pull) %>%
+        summarise(n_alertas = sum(es_outlier, na.rm = TRUE), .groups = "drop") %>%
+        slice_max(n_alertas, n = 1, with_ties = FALSE) %>%
+        pull(tecnico_pull)
+    },
+    
+    Alertas_Totales_Pregunta = {
+      mu <- mean(valor_limpio, na.rm = TRUE)
+      sigma <- sd(valor_limpio, na.rm = TRUE)
+      sum(abs(valor_limpio - mu) > (3 * sigma), na.rm = TRUE)
+    },
+    
+    .groups = "drop"
+  ) %>%
+  # Ordenamos por las preguntas que tienen más ruido (más alertas detectadas)
+  arrange(desc(Alertas_Totales_Pregunta))
+
+# --- VERIFICACIÓN ---
+print(resumen_preguntas_criticas)
 
 
 #-----------------------#
@@ -370,7 +480,7 @@ base_manga <- base_manga %>%
   ungroup()
 
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
-dup <- base_manga[, c("total_dup","id", "day" ,"id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto", "key")]
+dup <- base_manga[, c("total_dup","padron_pull", "day" ,"id_unico", "status_survey_resp","p11_02_nombre","nombre_contacto", "key")]
 
 
 table(base_manga$total_dup)
@@ -425,7 +535,7 @@ summary(base_manga_sf$distancia_m)
 
 # 5. Crear Alerta
 base_manga_sf <- base_manga_sf %>%
-  mutate(alerta_geo = ifelse(distancia_m > 20, "REVISAR: Fuera de rango", "OK"))
+  mutate(alerta_geo = ifelse(distancia_m > 15, "REVISAR: Fuera de rango", "OK"))
 
 # Volver a dataframe normal si es necesario para Looker
 base_manga <- base_manga_sf %>% st_drop_geometry() %>% as.data.frame()
@@ -458,18 +568,23 @@ base_manga <- base_manga %>%
 base_manga <- base_manga %>%
   group_by(categoria_auditoria) %>%
   mutate(
-    mu_nsnr = mean(total_nsnr[es_efectiva == 1], na.rm = TRUE),
-    sd_nsnr = sd(total_nsnr[es_efectiva == 1], na.rm = TRUE),
+    mu_nsnr = mean(total_nsnr, na.rm = TRUE),
+    sd_nsnr = sd(total_nsnr, na.rm = TRUE),
     
     # Bajamos el mínimo a 3 respuestas NS/NR para activar la alerta
-    umbral_dinamico = pmax(mu_nsnr + (3 * sd_nsnr), 3, na.rm = TRUE),
+    umbral_dinamico = pmax(mu_nsnr + (5 * sd_nsnr), 5, na.rm = TRUE),
     
-    alerta_exceso_nsnr = if_else(
-      es_efectiva == 1 & (total_nsnr >= umbral_dinamico | tasa_nsnr > 30), 
+    alerta_exceso_nsnr = if_else( (total_nsnr >= 4), 
       1, 0, missing = 0
     )
   ) %>%
   ungroup()
+
+
+# Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
+alerta_exceso_nsnr <- base_manga[, c("total_nsnr", "umbral_dinamico", "alerta_exceso_nsnr","key", "categoria_auditoria")]
+
+
 
 #-------------------------------#
 # 7.Alerta: Contenido basura    #
@@ -572,7 +687,7 @@ base_manga <- base_manga %>%
     flag_duplicated = if_else(total_dup == 1, 1, 0, missing = 0),
     
     # 7. Flag Georeferenciación (Fuera de rango > 10m)
-    flag_geofencing = if_else(!is.na(distancia_m) & distancia_m > 10, 1, 0, missing = 0),
+    flag_geofencing = if_else(!is.na(distancia_m) & distancia_m > 15, 1, 0, missing = 0),
     
     # 8. Flag Exceso de NS/NR
     flag_nsnr = if_else(alerta_exceso_nsnr == 1, 1, 0, missing = 0)
@@ -586,6 +701,7 @@ base_manga <- base_manga %>%
         flag_extreme_values == 0 & 
         flag_duplicated == 0 & 
         flag_geofencing == 0 &
+        flag_missing == 0 &
         flag_nsnr == 0 &
         flag_texto_basura == 0,
       1, 0
@@ -598,6 +714,7 @@ base_manga <- base_manga %>%
         flag_duplicated == 1 | 
         flag_geofencing == 1 |
         flag_nsnr == 1 |
+        flag_missing == 1 |
         flag_texto_basura == 1,
       1, 0
     ),
@@ -618,8 +735,6 @@ base_manga_clear <- base_manga %>%
   select(!starts_with("m_"))
 base_manga_clear <- base_manga_clear %>%
   select(!starts_with("s_"))
-base_manga_clear <- base_manga_clear %>%
-  select(!starts_with("ex_"))
 base_manga_clear <- base_manga_clear %>%
   select(!starts_with("trash_"))
 
@@ -645,3 +760,56 @@ resumen_diario_vertical <- base_manga %>%
   arrange(desc(day))
 
 print(resumen_diario_vertical)
+
+####################################################
+# CONSOLIDADO DE ALERTAS POR MANZANA
+####################################################
+
+consolidado_alertas_manzana <- base_manga %>%
+  # Trabajamos sobre las encuestas finales para no duplicar alertas
+  filter(encuesta_final == 1) %>% 
+  group_by(Manzana = paste("Manzana", str_extract(manzana_pull, "\\d+"))) %>%
+  summarise(
+    # 1. Dimensión de la Manzana
+    Total_Padrones_Visitados = n(),
+    Total_Efectivas = sum(es_efectiva, na.rm = TRUE),
+    
+    # 2. Resumen de Alertas Críticas (Conteo de incidencias)
+    Alertas_GPS = sum(flag_geofencing, na.rm = TRUE),
+    Alertas_Texto_Basura = sum(flag_texto_basura, na.rm = TRUE),
+    Alertas_Tiempos = sum(flag_duration_outlier, na.rm = TRUE),
+    Alertas_Duplicados = sum(flag_duplicated, na.rm = TRUE),
+    Alertas_NSNR = sum(flag_nsnr, na.rm = TRUE),
+    Alertas_Valores_Extremos = sum(flag_extreme_values, na.rm = TRUE),
+    
+    # 3. Resumen de Integridad (Missings y Saltos)
+    Promedio_Missings = round(mean(total_missing, na.rm = TRUE), 2),
+    Promedio_Saltos = round(mean(total_saltos, na.rm = TRUE), 2),
+    
+    # 4. Cálculo de "Salud de la Manzana"
+    Encuestas_Con_Alerta = sum(Alerta_Auditoria, na.rm = TRUE),
+    Encuestas_Exitosas = sum(Exito_Auditoria, na.rm = TRUE),
+    
+    # Porcentaje de Calidad: (Exitosas / Total Visitadas)
+    Indice_Calidad = round((Encuestas_Exitosas / Total_Padrones_Visitados) * 100, 1),
+    
+    # Identificar Supervisores y Equipos involucrados
+    Supervisor = first(supervisor_pull),
+    Equipos = paste(unique(tecnico_pull), collapse = " | "),
+    .groups = "drop"
+  ) %>%
+  # 5. Clasificación de la Manzana según su calidad
+  mutate(
+    Estado_Auditoria = case_when(
+      Indice_Calidad >= 90 ~ "✅ ALTA CALIDAD",
+      Indice_Calidad >= 70 ~ "⚠️ REVISIÓN LEVE",
+      Indice_Calidad < 70  ~ "🚨 CRÍTICA: REVISAR EQUIPO",
+      TRUE ~ "Sin Datos"
+    )
+  ) %>%
+  # Ordenar por las más críticas primero
+  arrange(Indice_Calidad)
+
+# --- VERIFICACIÓN ---
+print(consolidado_alertas_manzana)
+
