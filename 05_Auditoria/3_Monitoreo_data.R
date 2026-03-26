@@ -191,7 +191,7 @@ tabla_gestion_manga <- base_manga %>%
     trash = if_else(flag_texto_basura == 1, paste0("🗑️ Basura: ", texto_detalle_trash), NA_character_),
     nsnr  = if_else(flag_nsnr == 1, paste0("❓ NS/NR: ", lista_nsnr), NA_character_),
     out   = if_else(flag_extreme_values == 1, paste0("📈 Valor: ", detalle_outliers), NA_character_),
-    dup   = if_else(flag_duplicated == 1, "👥 DUPLICADO", NA_character_),
+    dup   = if_else(flag_duplicated == 1, paste0("👥 DUPLICADO: ", id_unico), NA_character_),
     # NUEVO: Detalle de Missings
     miss  = if_else(flag_missing == 1, detalle_missings, NA_character_)
     ) %>%

@@ -24,6 +24,7 @@ base_manga_clear <- base_manga_clear %>%
   ))
 
 base_odk_limpia <- base_manga_clear %>%
+  filter(Exito_Auditoria == 1) %>%
   # 1. Conservamos Identificadores Clave (Metadata y Pulls)
   # 2. Seleccionamos solo las respuestas finales (Labels)
   # 3. Mantenemos variables de georreferencia y tiempos
@@ -187,14 +188,7 @@ base_odk_limpia <- base_manga_clear %>%
     obs_finales,
     
     # --- Metadata de Calidad (Variables Mejoradas) ---
-    categoria_auditoria,
-    encuesta_final,
-    Rechazo_lbl,
-    Tiempos_Anomalos_lbl,
-    ID_Repetido_lbl,
-    Fuera_Rango_Geo_lbl,
-    Exceso_NSNR_lbl,
-    Contenido_basura_lbl
+    categoria_auditoria
   )
 
 # --- LIMPIEZA DE TEXTO ADICIONAL ---

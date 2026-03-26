@@ -53,5 +53,69 @@ export_sheet(base_para_looker_clean, sheet_auditadas, "base_manga_looker",
              label = "Auditadas", pause = 5)
 
 
+# Exportar datos limpias hogares -----------------------------------------------------
+
+sheet_limpias <- tryCatch({
+  gs4_get("1cH3NXLB6i0zSZbor1U4vqtsCL3aWa9AoJ-GVB5GcGVg")
+}, error = function(e) {
+  stop("Error al conectar con el Google Sheet de alertas: ", e)
+})
 
 
+# 2. Ahora exportamos la versión limpia
+export_sheet(base_odk_limpia, sheet_limpias, "Base_datos_hogares_final", 
+             label = "Limpias_final_case", pause = 5)
+
+
+# Exportar datos limpias casos -----------------------------------------------------
+
+sheet_limpias <- tryCatch({
+  gs4_get("1cH3NXLB6i0zSZbor1U4vqtsCL3aWa9AoJ-GVB5GcGVg")
+}, error = function(e) {
+  stop("Error al conectar con el Google Sheet de alertas: ", e)
+})
+
+
+# 2. Ahora exportamos la versión limpia
+export_sheet(base_manga_casos_clean, sheet_limpias, "Base_datos_casos", 
+             label = "Limpias_casos", pause = 5)
+
+
+# Exportar datos limpias casos -----------------------------------------------------
+
+sheet_auditadas <- tryCatch({
+  gs4_get("1bY3Ua6IpZOWrX99Mr2SenWUgByhRIbBk1Bce3oRcmvw")
+}, error = function(e) {
+  stop("Error al conectar con el Google Sheet de alertas: ", e)
+})
+
+
+# 2. Ahora exportamos la versión limpia
+export_sheet(base_manga_casos_clean, sheet_auditadas, "Base_datos_casos", 
+             label = "Limpias_casos", pause = 5)
+
+
+# Exportar datos avance campo -----------------------------------------------------
+
+sheet_avance <- tryCatch({
+  gs4_get("1Kp8tFRvJKMkLRFKVsAgysQzcz5BDtn9HCegZFgs9siw")
+}, error = function(e) {
+  stop("Error al conectar con el Google Sheet de alertas: ", e)
+})
+
+
+# 2. Ahora exportamos la versión limpia
+export_sheet(resumen_horizontal, sheet_avance, "Avance diario reporte", 
+             label = "Avance reporte", pause = 5)
+
+# Exportar datos avance campo -----------------------------------------------------
+
+sheet_avance <- tryCatch({
+  gs4_get("1Kp8tFRvJKMkLRFKVsAgysQzcz5BDtn9HCegZFgs9siw")
+}, error = function(e) {
+  stop("Error al conectar con el Google Sheet de alertas: ", e)
+})
+
+# 2. Ahora exportamos la versión limpia
+export_sheet(avance_manzana_pro, sheet_avance, "Avance por Manzana (Metas)", 
+             label = "Manzana Metas", pause = 5)
