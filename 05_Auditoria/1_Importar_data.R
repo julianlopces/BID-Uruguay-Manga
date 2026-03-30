@@ -33,8 +33,8 @@ lista_resultados <- lapply(proyectos_ids, procesar_proyecto_missings)
 # Unir todos los proyectos
 # bind_rows es genial aquí porque si un formulario tiene columnas que el otro no, 
 # las llenará con NA automáticamente.
-final_data <- bind_rows(lista_resultados)
+data_cruda <- bind_rows(lista_resultados)
 
 # Opcional: Limpiar nombres de columnas (quitar puntos, espacios, etc.)
-final_data <- final_data %>% clean_names()
+data_cruda <- data_cruda %>% clean_names()
 

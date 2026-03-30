@@ -1,17 +1,23 @@
+#==============================================================================#
+#                PROYECTO: MONITOREO DE CAMPO - MANGA                       ----
+#==============================================================================#
 
-
+# 1. CARGA DE METADATOS (CASE MANAGEMENT & ENUMERATORS) ----
 # 1. LEER CASE MANAGEMENT Y ENUMERATORS
+
 url_case_management <- "https://docs.google.com/spreadsheets/d/1qAtDSHtNwFmmxp3HWp4nNe64ic3YTY2pP9cl3E50CTc/edit?gid=1160660477#gid=1160660477"
 case_management <- read_sheet(url_case_management)
 
 url_enumerators <- "https://docs.google.com/spreadsheets/d/1YcafSQeOn0183FXhMjHj8n6Nrebpc3BbIbgadFstPDU/edit?gid=0#gid=0"
 enumerators_tab <- read_sheet(url_enumerators)
 
+id_sheet <- "https://docs.google.com/spreadsheets/d/1my_dgomVoXUI8ADPGIV8WyYek1qQtFuVsO_lvKxDhLY/edit"
 
-# 1. PREPARAR META ÚNICA POR TÉCNICO
-####################################################
 
-# 1.1 PROCESAR META (ASIGNACIÓN)
+# 2. PREPARACIÓN DE METAS Y ASIGNACIÓN POR TÉCNICO ----
+
+###    2.1. Procesamiento de Metas por Manzana ----
+
 # Ahora agrupamos por Técnico y Manzana para tener la meta clara
 meta_resumen <- case_management %>%
   # Limpieza de nombres para el join
@@ -28,6 +34,7 @@ meta_resumen <- case_management %>%
     .groups = "drop"
   )
 
+###    2.2. Consolidación de Metas por Técnico ----
 # Colapsamos las manzanas y sumamos padrones para evitar duplicados en el join
 meta_tecnico_consolidada <- meta_resumen %>%
   group_by(Tecnico) %>%
@@ -41,9 +48,8 @@ meta_tecnico_consolidada <- meta_resumen %>%
     .groups = "drop"
   )
 
-####################################################
-# 2. CONSOLIDADO MULTICATEGORÍA (AUDITORÍA)
-####################################################
+# 3. CONSOLIDADO MULTICATEGORÍA DE AUDITORÍA ----
+
 consolidado_final_manga <- base_manga %>%
   group_by(Tecnico = tecnico_pull, Encuestador = ident_enc_resp) %>% 
   summarise(
@@ -87,14 +93,10 @@ consolidado_final_manga <- base_manga %>%
 
 print(consolidado_final_manga)
 
-####################################################
-# 4. EXPORTACIÓN
-####################################################
-id_sheet <- "https://docs.google.com/spreadsheets/d/1my_dgomVoXUI8ADPGIV8WyYek1qQtFuVsO_lvKxDhLY/edit"
+# 4. PROCESAMIENTO DE DETALLES PARA GESTIÓN ----
 
+###    4.1. Diccionario de Etiquetas (Labels ODK) ----
 
-# --- PASO A: Detalle de Texto Basura ---
-# --- 1. DICCIONARIO DE ETIQUETAS (Para que el reporte sea legible) ---
 # Usamos tu ODK_filtrado para mapear nombres técnicos a preguntas reales
 diccionario_nombres <- ODK_filtrado %>% 
   select(name, label) %>% 
@@ -116,7 +118,7 @@ diccionario_nombres <- ODK_filtrado %>%
   group_by(name) %>% 
   summarise(label = first(label), .groups = "drop")
 
-# --- PASO A: Detalle de Texto Basura ---
+###    4.2. Detalle de Texto Basura (Trash )----
 detalle_basura_manga <- base_manga %>%
   filter(flag_texto_basura == 1) %>%
   select(key, all_of(intersect(vars_texto, names(.))), starts_with("trash_")) %>%
@@ -126,7 +128,7 @@ detalle_basura_manga <- base_manga %>%
   group_by(key) %>%
   summarise(texto_detalle_trash = paste0(pregunta, ": '", texto_escrito, "'", collapse = " | "), .groups = "drop")
 
-# --- PASO EXTRA: Detalle para la Tabla de Gestión ---
+###    4.3. Detalle de Incidencias NS/NR ----
 # Esto sirve para que el supervisor vea qué preguntas fueron marcadas como NS/NR
 detalle_nsnr_manga <- base_manga %>%
   filter(flag_nsnr == 1) %>%
@@ -139,7 +141,7 @@ detalle_nsnr_manga <- base_manga %>%
     .groups = "drop"
   )
 
-# --- 2. DETALLE DE OUTLIERS CON LABELS ---
+###   4.4. Detalle de Valores Extremos (Outliers) ----
 detalle_extremos_manga <- base_manga %>%
   filter(flag_extreme_values == 1) %>%
   select(key, all_of(intersect(vars_to_check, names(.))), starts_with("ex_")) %>%
@@ -151,7 +153,7 @@ detalle_extremos_manga <- base_manga %>%
   group_by(key) %>%
   summarise(detalle_outliers = paste0(pregunta_limpia, ": [", valor, "]", collapse = " | "), .groups = "drop")
 
-# --- 4. DETALLE DE MISSINGS CON LABELS ---
+###    4.5. Detalle de Datos Faltantes (Missings) ----
 detalle_missings_manga <- base_manga %>%
   # Filtramos encuestas que tengan al menos un missing detectado
   filter(total_missing > 0) %>% 
@@ -176,7 +178,7 @@ detalle_missings_manga <- base_manga %>%
     .groups = "drop"
   )
 
-# --- 3. CONSTRUCCIÓN DE LA TABLA DE GESTIÓN ---
+# 5. CONSTRUCCIÓN DE LA TABLA DE GESTIÓN DE ALERTAS ----
 tabla_gestion_manga <- base_manga %>%
   sf::st_drop_geometry() %>% 
   filter(Alerta_Auditoria == 1 & categoria_auditoria == "EFECTIVA" ) %>%
@@ -206,10 +208,13 @@ tabla_gestion_manga <- base_manga %>%
     ),
     # Acción simplificada
     Accion = case_when(
-      flag_duplicated == 1 ~ "Eliminar registro",
-      flag_texto_basura == 1 ~ "Invalidar y re-encuestar",
+      flag_duplicated == 1 ~ "Revisar registro",
+      flag_texto_basura == 1 ~ "Revisar texto",
       flag_geofencing == 1 ~ "Verificar ubicación",
       flag_extreme_values == 1 ~ "Confirmar dato numérico",
+      flag_missing == 1 ~ "Revisar datos faltantes",
+      flag_nsnr == 1 ~ "Revisar cantidad atipica de NSNR",
+      flag_duration_outlier == 1 ~ "Duración atipica",
       TRUE ~ "Revisión general"
     )
   ) %>%
@@ -228,7 +233,7 @@ tabla_gestion_manga <- base_manga %>%
   ) %>%
   arrange(`Alertas Detalladas`, desc(`Tipo de encuesta`))
 
-# --- EXPORTACIÓN ---
+###    5.1. Exportación  ---- 
 sheet_write(tabla_gestion_manga, ss = id_sheet, sheet = "Tabla_Gestion_Alertas")
 
 base_manga_clear <- base_manga_clear %>%
@@ -236,6 +241,9 @@ base_manga_clear <- base_manga_clear %>%
   left_join(detalle_extremos_manga, by = "key") %>%
   left_join(detalle_nsnr_manga, by = "key") %>% 
   left_join(detalle_missings_manga, by = "key")
+
+
+# 6. MÓDULO DE SUPERVISIÓN TÉCNICA (ARQUITECTA) ----
 
 # 1. Crear la base específica para la Arquitecta
 base_revision_arqui <- base_manga %>%
@@ -261,25 +269,59 @@ base_revision_arqui <- base_manga %>%
     `COMENTARIOS DE LA ARQUI` = ""
   )
 
-
+###    6.1. Exportación  ---- 
 sheet_write(base_revision_arqui, ss = id_sheet, sheet = "Supervisión esquemas funcionales") 
 
 
-####################################################
-# REPORTE DE AVANCE DE MANZANA: LÓGICA DE CIERRE Y AUDITORÍA
-####################################################
+# 7. REPORTE DE AVANCE INTELIGENTE POR MANZANA ----
 
-# 1. Preparar la Meta (Aseguramos formato "Manzana X")
+
+###    7.1. Lógica de Cierre y Estatus de Recorrido ----
+
+# 1. DICCIONARIO DE NOMBRES REALES
+nombres_tecnicos <- tribble(
+  ~users,                            ~enumerator_name,
+  "anaclaranunez2628@gmail.com",     "Anaclara Núñez de los Santos",
+  "joadog12@gmail.com",              "Franco Joaquín Dogliotti Espinosa",
+  "el978er@gmail.com",               "Oscar Rodríguez",
+  "valentinamunist@gmail.com",       "Valentina Munist",
+  "juanlozano.a92@gmail.com",        "Juan Luis Lozano Alvarenga",
+  "cuervo0305@gmail.com",            "Joaquín Cuervo D'ottone",
+  "bentancornahuel349@gmail.com",    "Nahuel Bentancor Burgues",
+  "villalbaptadeo@gmail.com",        "Tadeo Villalba Pereira",
+  "ivobritos09@gmail.com",           "Ivo Britos",
+  "pantonella895@gmail.com",         "Antonella Pirri Piñeyro",
+  "manurodriguez201@gmail.com",      "Manuel Rodriguez",
+  "valentinabarracoromero@gmail.com", "Valentina Barraco",
+  "altezmayra@gmail.com",            "Mayra Altez",
+  "federicoderossiesteves@gmail.com", "Federico Derossi"
+)
+
+# 2. PROCESAR ASIGNACIONES (ENUMERATORS)
+# Estandarizamos a "Manzana X" extrayendo solo los números
+enumerators_limpio <- enumerators_tab %>%
+  left_join(nombres_tecnicos, by = "users") %>%
+  mutate(
+    num = str_extract(name, "\\d+"),
+    Manzana = paste("Manzana", num),
+    Tecnico_Asignado = if_else(users == "not_yet", "🚫 No Asignada", coalesce(enumerator_name, users))
+  ) %>%
+  select(Manzana, Tecnico_Asignado)
+
+# 3. PREPARAR META (CASE MANAGEMENT)
 meta_manzana <- case_management %>%
-  mutate(users_id = str_trim(as.character(enumerators))) %>%
-  inner_join(enumerators_tab, by = c("users_id" = "id")) %>%
-  # Forzamos limpieza y formato "Manzana 1"
-  mutate(Manzana = str_trim(as.character(name))) %>% 
+  filter(id != 1) %>%
+  mutate(
+    num = str_extract(as.character(manzana), "\\d+"),
+    Manzana = paste("Manzana", num)
+  ) %>%
   group_by(Manzana) %>%
   summarise(
     Padrones_Totales = n_distinct(padron, na.rm = TRUE),
     .groups = "drop"
-  )
+  ) %>%
+  # Unimos con la asignación de enumerators
+  left_join(enumerators_limpio, by = "Manzana")
 
 # 1. Resumen de trabajo real (Separando Éxito de Alertas)
 trabajo_manzana <- base_manga %>%
@@ -301,12 +343,20 @@ trabajo_manzana <- base_manga %>%
     # --- MÉTRICA DE ALERTAS ---
     ENCUESTAS_EN_REVISION = sum(Alerta_Auditoria == 1 & categoria_auditoria != "AGENDADA/PENDIENTE" , na.rm = TRUE),
     
-    Equipos_Intervencion = paste(unique(paste0(tecnico_pull, " + ", ident_enc_resp)), collapse = " | "),
+    # --- EQUIPOS (Separados como solicitaste) ---
+    Tecnico = paste(unique(tecnico_pull), collapse = " | "),
+    Encuestadores = paste(unique(ident_enc_resp), collapse = " | "),
     SUPERVISOR_Intervencion = first(supervisor_pull),
+    
+    # --- FECHAS Y ACTIVIDAD ---
+    Fecha_Primera_Visita = min(as.Date(submission_date), na.rm = TRUE),
+    Fecha_Ultima_Visita  = max(as.Date(submission_date), na.rm = TRUE),
+    # Días activos: días transcurridos entre la primera y última visita
+    Dias_Activos = as.numeric(Fecha_Ultima_Visita - Fecha_Primera_Visita) + 1,
     .groups = "drop"
   )
 
-# 2. Consolidado Final con Reglas de Status
+###    7.2. Semáforo Estratégico de Manzanas ----
 avance_manzana_pro <- meta_manzana %>%
   left_join(trabajo_manzana, by = "Manzana") %>%
   mutate(across(c(EFECTIVAS, RECHAZOS, NO_ELEGIBLES, AGENDADAS, ENCUESTAS_EN_REVISION, TOTAL_VISITADOS_FISICOS), ~ coalesce(.x, 0))) %>%
@@ -335,12 +385,14 @@ avance_manzana_pro <- meta_manzana %>%
     CASOS_CERRADOS_LIMPIOS = EFECTIVAS + RECHAZOS + NO_ELEGIBLES,
     PERC_AVANCE_REAL = round((CASOS_CERRADOS_LIMPIOS / Padrones_Totales) * 100, 1),
     
-    Dias_Inactiva = as.numeric(Sys.Date() - Ultima_Visita),
+    # Días Inactivos desde la última visita hasta hoy
+    Dias_Inactivos = as.numeric(Sys.Date() - Fecha_Ultima_Visita),
     
     # 4. SEMÁFORO ESTRATÉGICO (Reglas actualizadas)
     Semaforo = case_when(
+      Tecnico_Asignado == "🚫 No Asignada" ~ "📁 NO ASIGNADA",
       # REGLA ORO: Si ya no hay No Visitados pero hay alertas
-      NO_VISITADOS == 0 & ENCUESTAS_EN_REVISION > 0 ~ "🔍 PENDIENTE AUDITORÍA",
+      PERC_AVANCE_REAL == 100 & ENCUESTAS_EN_REVISION > 0 ~ "🔍 PENDIENTE AUDITORÍA",
       
       # Si ya no hay nada pendiente de ningún tipo
       PERC_AVANCE_REAL >= 100 & ENCUESTAS_EN_REVISION == 0 ~ "🟢 COMPLETA",
@@ -349,7 +401,7 @@ avance_manzana_pro <- meta_manzana %>%
       TOTAL_VISITADOS_FISICOS == 0 ~ "⚪ SIN EMPEZAR",
       
       # Si pasaron más de 4 días
-      Dias_Inactiva > 4 & NO_VISITADOS > 0 ~ "🔥 MANZANA INACTIVA",
+      Dias_Inactivos > 4 & NO_VISITADOS > 0 ~ "🔥 MANZANA INACTIVA",
       
       # Recorrida al 100 pero con agendadas (limpias)
       PERC_RECORRIDO >= 100 & AGENDADAS > 0 ~ "🟡 REVISITAR (Pendientes)",
@@ -368,6 +420,9 @@ avance_manzana_pro <- meta_manzana %>%
   # 5. Selección y Orden
   select(
     Manzana,
+    Supervisor = SUPERVISOR_Intervencion,
+    Tecnico = Tecnico_Asignado,
+    Encuestadores,
     `Padrones Totales` = Padrones_Totales,
     `No Visitados` = NO_VISITADOS,
     EFECTIVAS,
@@ -377,22 +432,21 @@ avance_manzana_pro <- meta_manzana %>%
     `Alertas de Auditoría` = ENCUESTAS_EN_REVISION,
     `% Recorrido` = PERC_RECORRIDO,
     `% Avance real` = PERC_AVANCE_REAL,
+    `Primera Visita` = Fecha_Primera_Visita,
+    `Última Visita` = Fecha_Ultima_Visita,
+    `Días Activos (Duración)` = Dias_Activos,
+    `Días Inactiva (Desde última)` = Dias_Inactivos,
     Alertas_Manzana,
-    `Días Inactiva` = Dias_Inactiva,
-    `Supervisor` = SUPERVISOR_Intervencion,
-    `Equipos` = Equipos_Intervencion,
-    Semaforo
+    Semaforo,
   ) %>%
   arrange(desc(`% Recorrido`), Semaforo)
 
-# --- EXPORTACIÓN ---
+### 7.3 Exportación  ----
 sheet_write(avance_manzana_pro, ss = id_sheet, sheet = "Avance_Inteligente_Manzana")
 
 print("Reporte de avance por manzana generado con éxito.")
 
-####################################################
-# CONSOLIDADO INTEGRAL: PRODUCTIVIDAD, ESQUEMAS Y ALERTAS
-####################################################
+# 8. CONSOLIDADO INTEGRAL DE PRODUCTIVIDAD Y CALIDAD ----
 
 consolidado_detallado_final <- base_manga %>%
   group_by(
@@ -436,7 +490,7 @@ consolidado_detallado_final <- base_manga %>%
   mutate(across(where(is.numeric), ~ ifelse(is.nan(.), 0, .))) %>%
   arrange(desc(EFECTIVAS))
 
-# --- EXPORTACIÓN ---
-sheet_write(consolidado_detallado_final, ss = id_sheet, sheet = "Consolidado_Productividad_Alertas")
+### 8.1. Exportación  ----
+sheet_write(resumen_esquemas_tecnico, ss = id_sheet, sheet = "Resumen esquemas funcionales")
 
 print("Consolidado detallado generado y exportado a Google Sheets.")

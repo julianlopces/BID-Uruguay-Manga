@@ -1,11 +1,22 @@
+#==============================================================================#
+#                PROYECTO: AUDITORÍA Y LIMPIEZA DE DATOS - MANGA -----             
+#==============================================================================#
+# Consultora: Maria Fernanda Salazar
+# Asistente: Ariana Rodriguez
+# Fecha: Marzo 2026
+#------------------------------------------------------------------------------#
 
-# Creamos una copia de final_data
-base_manga <- final_data
+# 1. CARGA DE DATOS Y PREPARACIÓN ------
+
+base_manga <- data_cruda
+
+table(data_cruda$status_survey_resp)
 
 base_manga <- base_manga %>%
   relocate(key, .before = padron_pull)
 
-# --- SECCIÓN DE LIMPIEZA INICIAL ---
+# 2. LIMPIEZA INICIAL: BLACKLIST  ----
+
 # Lista de IDs (instanceID o id_unico) que deben eliminarse definitivamente
 ids_a_eliminar <- c(
   "uuid:57dbdf02-f95c-4e09-8614-6df9ae81f309",
@@ -14,7 +25,13 @@ ids_a_eliminar <- c(
   "uuid:af9818e4-e7ae-485b-844f-ee139dc0beaa",
   "uuid:bf556c11-a005-4c3d-9d74-26654f488f1f",
   "uuid:dae55bf4-69ad-4a49-9236-8d17985b4705",
-  "uuid:5c61615f-73cd-4835-b76a-66d72a73281d"
+  "uuid:5c61615f-73cd-4835-b76a-66d72a73281d",
+  "uuid:c6976955-a76d-41b6-9265-25cc3ca70fc5",
+  "uuid:b8f7df6b-a68b-4d26-b017-32a29a5a2982",
+  "uuid:392ce1dc-b3bf-4383-885b-aff74438628f",
+  "uuid:d552e5a1-90c1-4b4c-9589-792d7dff4569",
+  "uuid:a483c90e-82b3-4086-b771-2d2585cdca13",
+  "uuid:adb2c0d5-c252-46d8-b161-38beb90109ba" # ESTE FUE UN CASO DE UNA ENCUESTA Q SE ELIMINO PQ SOLO FUE PARA RECOGER INFORMACIÓN
 )
 
 base_manga <- base_manga %>%
@@ -26,12 +43,15 @@ print(paste("Encuestas eliminadas por blacklist:", length(ids_a_eliminar)))
 base_manga <- base_manga %>%
   filter(!(day == "Mar 23, 2026"))
 
-# Base para ver por día
+# Ver por día
 base_manga_prueba <- base_manga %>%
   filter((day == "Mar 20, 2026"))
 
 
-# --- DICCIONARIO DE CORRECCIONES MANUALES ---
+# 3. CORRECCIONES MANUALES ----
+
+### 3.1. Diccionario de correciones ID/Padrón -----
+
 # Agrega aquí cualquier KEY que necesite corrección de ID
 correcciones_manuales <- tribble(
   ~key,                                         ~id_correcto,
@@ -40,12 +60,19 @@ correcciones_manuales <- tribble(
   "uuid:8dfc622e-a716-4c7c-af15-7d70c73ebadc", "156050",
   "uuid:12bddf70-2967-4362-92aa-e69457e2db6d", "156073",
   "uuid:ba2e1d32-de1e-4035-a2cf-26268dffcdd7", "171718",
+  "uuid:5b9f4715-2b8b-4acc-b1c2-36bbcfc348dc", "91429",
   "uuid:f756a0b3-2dbc-4c6c-8a79-9fdbe42bf0b2", "91431",
-  "uuid:37caab2a-df0b-4859-97db-867798143707", "91436" #<- 91434 verificar luego
+  "uuid:fa79758d-4729-4c29-a501-32cf663e9014", "149913",
+  "uuid:37caab2a-df0b-4859-97db-867798143707", "91423",
+  "uuid:ffc0c3c0-79c9-4017-be4d-0c29f8514259", "91269",
+  "uuid:81e6ac6c-ec09-4843-aed3-35bb3d8d1f8a", "91267",
+  "uuid:12d37063-c652-4b8f-a889-c46d8ed46b32", "91861"
+  
   
 )
 
-# --- APLICACIÓN AUTOMÁTICA DE CORRECCIONES ---
+### 3.2. Aplicación de correciones ID/Padrón -------
+
 base_manga <- base_manga %>%
   left_join(correcciones_manuales, by = "key") %>%
   mutate(
@@ -54,37 +81,53 @@ base_manga <- base_manga %>%
     id = if_else(!is.na(id_correcto), id_correcto, as.character(id)),
     padron_pull = if_else(!is.na(id_correcto), id_correcto, as.character(padron_pull))
   ) %>%
-  select(-id_correcto) # Eliminamos la columna auxiliar para mantener limpia la base
+  select(-id_correcto)
 
-# Verificación en consola (opcional)
 print(paste("Correcciones manuales aplicadas:", nrow(correcciones_manuales)))
 
 
-# --- DICCIONARIO DE CORRECCIONES DE STATUS ---
+### 3.3. Diccionario de correciones de status ----
+
+# Diccionario maestro de códigos y etiquetas
+labels_status <- tibble(
+  status_id = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+  label_txt = c("COMPLETA", "OCUPANTES AUSENTES", "PARCIALMENTE COMPLETA", "CITA", 
+                "RECHAZO", "PADRÓN DESOCUPADO", "NO ES PADRÓN / TERRENO / EN CONSTRUCCION", 
+                "NO TIENE BAÑO", "NO EXISTE RED DE SANEAMIENTO", "PADRÓN CON MÁS DE 10 VIVIENDAS")
+)
+
 # Para forzar un cambio de resultado en encuestas específicas
 correcciones_status <- tribble(
   ~key,                                         ~status_nuevo,
   "uuid:a95eef92-c5a1-40af-9c84-41fbfb5332ec",  5, # Código 5 = RECHAZO
   "uuid:d7496e5f-d6e7-4dbf-80c0-142d38344efb", 5,
+  "uuid:0c1abfa2-2107-4bce-a075-5736668a1967", 5,
+  "uuid:a26b47f2-0e0a-4298-92ba-80ac7361bb21", 1,
 )
 
-# --- APLICACIÓN DE CORRECCIONES DE STATUS ---
+### --- 3.4 Aplicación de correciones de status ----
 base_manga <- base_manga %>%
+  # 1. Traemos el código nuevo
   left_join(correcciones_status, by = "key") %>%
+  # 2. Traemos el texto que corresponde a ese código nuevo desde el diccionario
+  left_join(labels_status, by = c("status_nuevo" = "status_id")) %>%
   mutate(
-    # Cambiamos el código numérico principal
+    # Si hay corrección, actualizamos el número
     status_survey = if_else(!is.na(status_nuevo), as.character(status_nuevo), as.character(status_survey)),
     
-    # CAMBIO SOLICITADO: Ajustamos las columnas de salida/publicación
-    pub_status = if_else(!is.na(status_nuevo), "RECHAZO", as.character(pub_status)),
-    
-    # Ajustamos la respuesta de texto (Label)
-    status_survey_resp = if_else(!is.na(status_nuevo), "RECHAZO", as.character(status_survey_resp))
+    # Si hay corrección, actualizamos los textos usando la etiqueta del diccionario (label_txt)
+    pub_status = if_else(!is.na(label_txt), label_txt, as.character(pub_status)),
+    status_survey_resp = if_else(!is.na(label_txt), label_txt, as.character(status_survey_resp))
   ) %>%
-  select(-status_nuevo) # Limpiamos la columna auxiliar
+  # Limpiamos las columnas auxiliares
+  select(-status_nuevo, -label_txt)
 
-# --- CORRECIÓN DE FECHA ---
+print("Correcciones aplicadas exitosamente para múltiples tipos de status.")
 
+
+# 4. NORMALIZACIÓN DE VARIABLES Y CREACIÓN DE CATEGORIAS ----
+
+# Correciones de fecha y hora
 base_manga <- base_manga %>%
   mutate(
     across(starts_with("fcs"), as.numeric),
@@ -107,14 +150,109 @@ base_manga <- base_manga %>%
   ) %>%
   filter(starttime >= ymd("2026-02-27"))
 
-
+# Ajuste de variable de número de viviendas
 base_manga <- base_manga %>%
   mutate(p1_06 = coalesce(p1_06, p1_08a),
          p1_08_resp = coalesce(p1_08_resp, p1_08_sel_resp))
 
+# 1. Definición de la lógica de categorización por palabras clave
+base_manga <- base_manga %>%
+  mutate(
+    # Limpieza de texto para búsqueda
+    comentario_clean = tolower(str_trim(pub_comentario)),
+    
+    # Categorización basada en patrones detectados en tus datos
+    status_comentario_num = case_when(
+      # 10. PADRÓN CON MÁS DE 10 VIVIENDAS
+      str_detect(comentario_clean, "más de 10|mas de 10|más de diez") ~ 10,
+      
+      # 9. NO EXISTE RED DE SANEAMIENTO
+      str_detect(comentario_clean, "no hay colector|sin colector|no existe red|no hay red|no tiene saneamiento") ~ 9,
+      
+      # 8. NO TIENE BAÑO
+      str_detect(comentario_clean, "no tiene baño|no cuenta con baño") ~ 8,
+      
+      # 7. NO ES PADRÓN / TERRENO / EN CONSTRUCCIÓN
+      str_detect(comentario_clean, "vacío|vacio|terreno|construcción|obras|baldío|baldio|inau|comercial|iglesia|galpón") ~ 7,
+      
+      # 6. PADRÓN DESOCUPADO
+      str_detect(comentario_clean, "desocupado|vacía|vacia|no vive nadie|abandonado|sin muebles") ~ 6,
+      
+      # 5. RECHAZO
+      str_detect(comentario_clean, "rechaz|negó|no quiso|no permite|no acepto|no interesa") ~ 5,
+      
+      # 4. CITA
+      str_detect(comentario_clean, "cita|agend|volver|mañana|después|despues|regresar|luego") ~ 4,
+      
+      # 2. OCUPANTES AUSENTES
+      str_detect(comentario_clean, "no salió nadie|no atendió|no se encuentra|ausente|no hay gente|golpeamos|palmas") ~ 2,
+      
+      # 1. COMPLETA
+      str_detect(comentario_clean, "perfectamente|todo ok|sin inconvenientes|completa|fluida|finalizada|correcta|sin observaciones") ~ 1,
+      
+      # Si no hay match claro
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  # Creamos la etiqueta de texto para el reporte
+  mutate(status_comentario_label = case_when(
+    status_comentario_num == 1 ~ "COMPLETA",
+    status_comentario_num == 2 ~ "OCUPANTES AUSENTES",
+    status_comentario_num == 4 ~ "CITA",
+    status_comentario_num == 5 ~ "RECHAZO",
+    status_comentario_num == 6 ~ "PADRÓN DESOCUPADO",
+    status_comentario_num == 7 ~ "NO ES PADRÓN / TERRENO / EN CONSTRUCCION",
+    status_comentario_num == 8 ~ "NO TIENE BAÑO",
+    status_comentario_num == 9 ~ "NO EXISTE RED DE SANEAMIENTO",
+    status_comentario_num == 10 ~ "PADRÓN CON MÁS DE 10 VIVIENDAS",
+    TRUE ~ "SIN CATEGORÍA CLARA"
+  ))
 
-# --- FLUJO PRINCIPAL DE AUDITORÍA ---
-# 1. CLASIFICACIÓN DE AUDITORÍA (CORREGIDO)
+# 2. GENERACIÓN DE LA ALERTA DE DISCREPANCIA
+base_manga_discr <- base_manga %>%
+  mutate(
+    # Comparamos el status_survey (que asumo es numérico) con el detectado
+    flag_error_comentario = if_else(
+      !is.na(status_comentario_num) & status_survey != status_comentario_num, 
+      1, 0
+    ),
+    
+    alerta_comentario = if_else(
+      flag_error_comentario == 1,
+      paste0("⚠️ DISCREPANCIA: Marcó ", status_survey, " pero escribió '", status_comentario_label, "'"),
+      "OK"
+    )
+  )
+
+# 3. VISTA DE RESULTADOS
+check_discrepancias <- base_manga_discr %>% 
+  filter(flag_error_comentario == 1) %>%
+  select(pub_comentario, status_survey, status_comentario_label, alerta_comentario)
+
+print(check_discrepancias)
+### --- 4.1. Limpieza de grupo_experimento según status ----
+
+check_pre_limpieza <- base_manga %>%
+  group_by(status_survey, grupo_experimento) %>%
+  summarise(conteo = n(), .groups = "drop")
+
+base_manga <- base_manga %>%
+  mutate(
+    # Transformamos grupo_experimento basándonos en la condición de status
+    grupo_experimento = case_when(
+      status_survey %in% c(1, 3, 5) ~ grupo_experimento,
+      TRUE ~ NA_character_ # Para todo lo demás (2, 4, 6, etc.) asignamos NA
+    )
+  )
+
+check_post_limpieza <- base_manga %>%
+  group_by(status_survey, grupo_experimento) %>%
+  summarise(conteo = n(), .groups = "drop")
+
+
+# 5. FLUJO PRINCIPAL DE AUDITORÍA: CLASIFICACIÓN ----
+
+### 5.1. Clasificación de auditoria ----
 base_manga <- base_manga %>%
   mutate(
     status_num = as.numeric(status_survey),
@@ -134,7 +272,7 @@ base_manga <- base_manga %>%
     )
   )
 
-# 2. SELECCIÓN DE LA MEJOR VISITA POR PADRÓN
+### 5.2. Selección de la última visita por padrón ----
 base_manga <- base_manga %>%
   group_by(padron_pull) %>%
   mutate(
@@ -152,13 +290,20 @@ base_manga <- base_manga %>%
   mutate(encuesta_final = if_else(row_number() == 1, 1, 0)) %>%
   ungroup()
 
-# Verificación rápida
+
 table(base_manga$encuesta_final, base_manga$categoria_auditoria)
 
-otro <- base_manga %>%
+# Revisión de inconsistencias
+inconsistencias <- base_manga %>%
   filter(encuesta_final==0 & categoria_auditoria == "EFECTIVA" )
 
-# --- ANÁLISIS DE PADRONES CON MÚLTIPLES OBSERVACIONES Y ALERTAS COMPLETAS ---
+# 6. ANÁLISIS DE HISTORIAL Y SEGUIMIENTO ----
+
+### 6.1. Análisis de casos cerrados y reabiertos ----
+
+# Sección muy importante para la revisión de casos que deberian ser CERRADOS, pero se volvieron 
+# reabrir. Principalmente sucede porque no tienen el envio automatico.
+
 analisis_duplicados <- base_manga %>%
   group_by(padron_pull) %>%
   # 1. Filtramos solo padrones que aparecen más de una vez
@@ -167,12 +312,12 @@ analisis_duplicados <- base_manga %>%
   arrange(padron_pull, submission_date) %>%
   mutate(
     # Lógica de detección de cierre previo
-    cierre_previo = lag(cumany(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE"))),
+    cierre_previo = lag(cumany(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE", "RECHAZO"))),
     cierre_previo = coalesce(cierre_previo, FALSE),
     
     alerta_auditoria = case_when(
-      cierre_previo & !(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE")) ~ "⚠️ REVISITAR TRAS CIERRE",
-      cierre_previo & (categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE")) ~ "⚠️ DOBLE CIERRE",
+      cierre_previo & !(categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE", "RECHAZO")) ~ "⚠️ REVISITAR TRAS CIERRE",
+      cierre_previo & (categoria_auditoria %in% c("EFECTIVA", "NO ELEGIBLE", "RECHAZO")) ~ "⚠️ DOBLE CIERRE",
       TRUE ~ "Seguimiento normal"
     )
   ) %>%
@@ -197,37 +342,23 @@ analisis_duplicados <- base_manga %>%
     key
   )
 
+# Siempre reportar con el equipo
+print(analisis_duplicados)
 
-# --- LIMPIEZA DE GRUPO_EXPERIMENTO SEGÚN STATUS ---
+### 6.1. Analisis de casos parcialmente completos ----
 
-base_manga <- base_manga %>%
-  mutate(
-    # Transformamos grupo_experimento basándonos en la condición de status
-    grupo_experimento = case_when(
-      status_num %in% c(1, 3, 5) ~ grupo_experimento,
-      TRUE ~ NA_character_ # Para todo lo demás (2, 4, 6, etc.) asignamos NA
-    )
-  )
-
-check_limpieza <- base_manga %>%
-  group_by(status_num, grupo_experimento) %>%
-  summarise(conteo = n(), .groups = "drop")
-
-####################################################
-# BASE DE DATOS: HISTORIAL DE PARCIALMENTE COMPLETAS
-####################################################
+# Si vemos un caso de una padrón que ha sido parcialmente completa y luego verificando
+# los comentarios y/o viendo si es que ya ingreso una nueva encuesta, debemos hacer seguimiento
+# de en que punto se quedo la primera vez para crea una sola observación final
 
 base_parcialmente_completas <- base_manga %>%
   # 1. Agrupamos por padrón para analizar su historia completa
   group_by(padron_pull) %>%
-  
   # 2. Filtramos: Solo nos quedamos con los padrones que tienen 
   # AL MENOS una observación con status_num == 3
   filter(any(status_num == 3, na.rm = TRUE)) %>%
-  
   # 3. Ordenamos cronológicamente para leer los comentarios en orden
   arrange(padron_pull, starttime) %>%
-  
   # 4. Seleccionamos las columnas de interés para tu revisión
   select(
     id_padron = padron_pull,
@@ -243,24 +374,13 @@ base_parcialmente_completas <- base_manga %>%
   ungroup()
 
 # --- VERIFICACIÓN ---
-# Cuántos padrones únicos tienen este problema:
 n_padrones_parciales <- n_distinct(base_parcialmente_completas$id_padron)
 print(paste("Se encontraron", n_padrones_parciales, "padrones con al menos una carga parcial."))
 
 
-# Esto debería darte exactamente 1 por cada padrón único
-check_unicos <- base_manga %>% 
-  filter(encuesta_final == 1) %>% 
-  count(padron_pull) %>% 
-  filter(n > 1)
+# 7. CREACIÓN DE LA BASE DE DATOS DE CASOS/INTENTOS ----
 
-if(nrow(check_unicos) == 0) {
-  print("Logrado: Cada padrón tiene una única observación final.")
-} else {
-  print("Ojo: Hay padrones duplicados aún. Revisar datos de origen.")
-}
-
-# BASE DE DATOS DE CASOS
+# Hacemos una copia
 base_manga_casos <- base_manga 
 
 # --- CREACIÓN DE BASE_MANGA_CASOS ---
@@ -291,15 +411,31 @@ base_manga_casos_clean <- base_manga_casos_clean %>%
   mutate(encuesta_final = if_else(row_number() == 1, 1, 0)) %>%
   ungroup()
 
-
 # Ver los primeros casos
 head(base_manga_casos_clean)
 
-# BASE DE DATOS DE ENCUESTAS FINALES 
+# 8. CREACIÓN DE LA BASES DE DATOS DEL ÚLTIMO REGISTRO ENVIADO ----
+
+# Esto debería darte exactamente 1 por cada padrón único
+check_unicos <- base_manga %>% 
+  filter(encuesta_final == 1) %>% 
+  count(padron_pull) %>% 
+  filter(n > 1)
+
+if(nrow(check_unicos) == 0) {
+  print("Logrado: Cada padrón tiene una única observación final.")
+} else {
+  print("Ojo: Hay padrones duplicados aún. Revisar datos de origen.")
+}
+
+# --- CREACIÓN DE BASE FINAL ---
 base_manga <- base_manga %>%
   filter(encuesta_final==1)
 
-# --- CREACIÓN DE FLAG DE AUDIO ---
+# 9. MÓDULO DE ALERTAS DE CALIDAD (FLAGS 0/1) ----
+
+### 9.1 Alerta de Audio ----
+
 base_manga <- base_manga %>%
   mutate(
     # Si audio_encuesta ES NA, ponemos 0. Si TIENE contenido (no es NA), ponemos 1.
@@ -310,20 +446,17 @@ base_manga <- base_manga %>%
 # Para ver cuántas encuestas tienen audio vs cuántas no
 table(base_manga$tiene_audio, useNA = "always")
 
+#Para registrar el avance de audios
 base_manga_efect <- base_manga %>%
   filter(categoria_auditoria == "EFECTIVA")
-# Muestra: Filas (Día) vs Columnas (Tiene Audio: 0=No, 1=Sí)
-table(base_manga_efect$day, base_manga_efect$tiene_audio)
 
-# Muestra: Filas (Día) vs Columnas (Tiene Audio: 0=No, 1=Sí)
+table(base_manga_efect$day, base_manga_efect$tiene_audio)
 table(base_manga_efect$day, base_manga_efect$p12_01)
 
-#### Alertas ####
-#---------------#
 
-#### ALERTA DE TIEMPO ####
+### 9.2 Alerta de Tiempos ----
+# Alerta de Tiempo usando lógica agrupada
 
-# 2. Alerta de Tiempo usando tu lógica pero agrupada
 base_manga <- base_manga %>%
   mutate(duration_min = as.numeric(duration) / 60) %>%
   group_by(categoria_auditoria) %>% # <--- La clave está aquí
@@ -357,8 +490,8 @@ base_manga <- base_manga %>%
 table(base_manga$alerta_corto, base_manga$categoria_auditoria)
 table(base_manga$alerta_excesivo, base_manga$categoria_auditoria)
 
-#### ALERTA DE MISSINGS ####
 
+### 9.3 Alerta de Missings y Saltos ----
 
 ODK_filtrado <- odkmissing::import_odk_propagate_required("05_Auditoria/ODK/encuestadores_Campo_missings.xlsx", required_value = "yes")
 ODK_filtrado <- ODK_filtrado |> 
@@ -379,6 +512,8 @@ base_manga <- odkmissing::flags_missing_por_variable(
   numeric_conds = TRUE,
   coerce_target = FALSE
 )
+
+# Levantar missings
 
 variables_missing <- names(base_manga)[grepl("^m_", names(base_manga))]
 
@@ -434,15 +569,14 @@ tabla_errores_por_padron <- base_manga |>
 # 3. Ver el resultado
 print(tabla_errores_por_padron)
 
-# Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
+# Verificación de casos particulares de missings
 missing <- base_manga |>
   filter(m_p5_11 == 1)
 print(missing)
 
 
-#---------------------------------------#
-# Valores numéricos extremos #
-#---------------------------------------#
+### 9.4. Alerta de Valores Numéricos Extremos ----
+
 # 1. Lista expandida de todas las variables integer
 vars_to_check <- c("p1_06", "p1_07", "p2_02", "p3_06", 
                    "p4_01", "p10_03", 
@@ -482,9 +616,7 @@ base_manga <- base_manga %>%
     flag_extreme_values = if_else(total_extremos > 0, 1, 0)
   )
 
-####################################################
-# RESUMEN ESTADÍSTICO Y AUDITORÍA POR PREGUNTA
-####################################################
+#### 9.4.1. Resumen estadístico por pregunta ----
 
 resumen_preguntas_criticas <- base_manga %>%
   # FILTRO CRÍTICO: Solo encuestas efectivas (ajusta el nombre de la columna si varía)
@@ -535,10 +667,8 @@ resumen_preguntas_criticas <- base_manga %>%
 # --- VERIFICACIÓN ---
 print(resumen_preguntas_criticas)
 
+### 9.5. Alerta de Duplicados ----
 
-#-----------------------#
-#  Alerta: Duplicados   #
-#-----------------------#
  caract_especi_mayus <- c("Á" = "A", "É" = "E", "Í" = "I", "Ó" = "O", "Ú" = "U", "Ñ" = "N")
  
 base_manga <- base_manga %>%
@@ -582,13 +712,18 @@ base_manga <- base_manga %>%
   ) %>%
   ungroup()
 
-# Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
+#### 9.5.1. Revisión de duplicados ----
+
 dup <- base_manga[, c("total_dup","padron_pull", "tecnico_pull", "day" ,"id_unico", "status_survey_resp","p11_02_nombre","pub_comentario",  "key")]
+dup <- dup %>%
+  filter(total_dup == 1)
 
+# --- VERIFICACIÓN ---
+print("Resumen de duplicados:")
+print(dup)
 
-table(base_manga$total_dup)
+### 9.6. Alerta de Georeferenciación ----
 
-#### ALERTA GEOREFERENCIACIÓN ####
 url_maestra <- "https://docs.google.com/spreadsheets/d/1brA0QxuJqCq8UAE4Umc-Ms89l06OEhtR-9DmgFMv1Pg/edit#gid=0"
 maestra_poligonos <- read_sheet(url_maestra)
 
@@ -598,10 +733,10 @@ maestra_data <- maestra_poligonos %>%
   mutate(padron = as.character(padron))
 
 # Convertir la columna de texto WKT a objetos espaciales reales
-# IMPORTANTE: Definimos que el origen es 32721 porque tus datos tienen números grandes (metros)
+# IMPORTANTE: Definimos que el origen es 32721 porque los datos tienen números grandes (metros)
 maestra_sf <- st_as_sf(maestra_data, wkt = "wkt_geom", crs = 32721)
 
-# 2. Procesar Base Manga (Tus Puntos)
+# 2. Procesar Base Manga
 base_manga_sf <- base_manga %>%
   mutate(
     latitud = as.numeric(georeferenciacion_latitude),
@@ -643,12 +778,18 @@ base_manga_sf <- base_manga_sf %>%
 # Volver a dataframe normal si es necesario para Looker
 base_manga <- base_manga_sf %>% st_drop_geometry() %>% as.data.frame()
 
+#### 9.6.1. Revisión de alertas por georeferenciación ----
+
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
 distancia <- base_manga[, c("alerta_geo", "distancia_m", "status_survey_resp","gps_precision","key")]
+distancia <- distancia %>%
+  filter(alerta_geo == "REVISAR: Fuera de rango")
 
+# --- VERIFICACIÓN ---
+print("Resumen de alertas por georeferenciación:")
+print(distancia)
 
-
-#### ALERTA NSNR ####
+### 9.7. Alerta de Exceso de NS/NR ----
 
 # 1. Definimos la lista expandida (Aseguramos que existan en la base)
 vars_nsnr <- c( "p4_04","p4_05", "p5_08", "p5_19", "p8_01", 
@@ -686,6 +827,8 @@ base_manga <- base_manga %>%
 
 # Selecciona las columnas 'nombre', 'apellido' y 'id' del dataframe original
 alerta_exceso_nsnr <- base_manga[, c("total_nsnr", "umbral_dinamico", "alerta_exceso_nsnr","key", "categoria_auditoria")]
+
+#### 9.7.1. Resumen por pregunta (NS/NR) ----
 
 # 1. Creamos el resumen solo para las encuestas efectivas
 resumen_nsnr_preguntas <- base_manga %>%
@@ -742,9 +885,8 @@ resumen_nsnr_preguntas <- base_manga %>%
 print("Resumen de NS/NR en Encuestas Efectivas:")
 print(resumen_nsnr_preguntas)
 
-#-------------------------------#
-# 7.Alerta: Contenido basura    #
-#-------------------------------#
+
+### 9.8 Alerta de Contenido Basura ----
 
 # 1. Definir las variables de texto a auditar
 vars_texto <- c("p3_03_otro",
@@ -814,9 +956,7 @@ base_manga <- base_manga %>%
     flag_texto_basura = if_else(total_texto_basura > 0, 1, 0)
   )
 
-#==========================#
-### Crear alertas LOOKER ###
-#==========================#
+# 10. CONSOLIDACIÓN DE RESULTADOS DE AUDITORÍA ----
 
 # Creamos todos los flags binarios (0 o 1)
 base_manga <- base_manga %>%
@@ -890,7 +1030,8 @@ base_manga <- base_manga %>%
     Contenido_basura_lbl = if_else(flag_texto_basura == 1, "Sí", "No")
   )
 
-# --- CREACIÓN DE BASE DE CONTROL DE AUDITORÍA ---
+### 10.1. Resumen de control de auditoria ----
+
 base_verificacion_audit <- base_manga %>%
   dplyr::select(
     key,                        # Identificador para saber de qué encuesta hablamos
@@ -912,46 +1053,12 @@ base_verificacion_audit <- base_manga %>%
     any_of(c("total_missing", "total_saltos"))
   )
 
-# --- VERIFICACIÓN RÁPIDA ---
-# 1. ¿Hay algún caso que sea Éxito y Alerta al mismo tiempo? (Debería dar 0 filas)
-contradicciones <- base_verificacion_audit %>% 
-  filter(Exito_Auditoria == 1 & Alerta_Auditoria == 1)
+# --- VERIFICACIÓN ---
+print("Resumen de resultados de auditoria:")
+print(base_verificacion_audit)
 
-print(paste("Casos contradictorios encontrados:", nrow(contradicciones)))
 
-base_manga_clear <- base_manga %>%
-  select(!starts_with("m_"))
-base_manga_clear <- base_manga_clear %>%
-  select(!starts_with("s_"))
-base_manga_clear <- base_manga_clear %>%
-  select(!starts_with("trash_"))
-
-# Generamos el resumen agrupado por día con las variables correctas
-resumen_diario_vertical <- base_manga %>%
-  filter(encuesta_final == 1) %>% 
-  group_by(day) %>%
-  summarise(
-    `Total Manzanas`          = n_distinct(manzana_pull),
-    `Encuestas Efectivas`     = sum(es_efectiva, na.rm = TRUE),
-    `Rechazos`                = sum(es_rechazo, na.rm = TRUE),
-    `No Elegibles (Cierres)`  = sum(es_no_elegible, na.rm = TRUE),
-    `Agendadas (Pendientes)`  = sum(es_agendada, na.rm = TRUE),
-    `Sin Colector (Frentista)`= sum(p1_01 == 2, na.rm = TRUE),
-    `Alertas de GPS (>10m)`   = sum(flag_geofencing, na.rm = TRUE),
-    `Alertas Texto Basura`    = sum(flag_texto_basura, na.rm = TRUE)
-  ) %>%
-  pivot_longer(
-    cols = -day, 
-    names_to = "Indicador", 
-    values_to = "Valor"
-  ) %>%
-  arrange(desc(day))
-
-print(resumen_diario_vertical)
-
-####################################################
-# CONSOLIDADO DE ALERTAS POR MANZANA
-####################################################
+### 10.2. Consolidado de alertas por manzana ----
 
 consolidado_alertas_manzana <- base_manga %>%
   # Trabajamos sobre las encuestas finales para no duplicar alertas
@@ -1002,48 +1109,17 @@ consolidado_alertas_manzana <- base_manga %>%
 print(consolidado_alertas_manzana)
 
 
-# Suponiendo que tu base se llama base_manga y la columna de texto es comentarios_pub
-base_manga <- base_manga %>%
-  mutate(
-    categoria_comentario = case_when(
-      # 1. INFRAESTRUCTURA TÉCNICA
-      str_detect(str_to_lower(pub_comentario), "colector|frentista|camara|pozo|conexion|saneamiento") ~ "Infraestructura/Técnico",
-      
-      # 2. AUSENTISMO (Logística)
-      str_detect(str_to_lower(pub_comentario), "nadie|no hay nadie|no atendio|no responde|ausente|vuelv|mañana|cita") ~ "Ausentismo/Revisita",
-      
-      # 3. RECHAZOS
-      str_detect(str_to_lower(pub_comentario), "rechazo|no quiso|no quiere|disconformidad|no dispuesta") ~ "Rechazo",
-      
-      # 4. CONDICIÓN DEL PADRÓN (No elegibles)
-      str_detect(str_to_lower(pub_comentario), "desocupado|baldio|construccion|vacia|comercio|deposito|inau|iglesia|usina") ~ "Padrón No Elegible",
-      
-      # 5. DESCRIPTIVOS / REFERENCIAS
-      str_detect(str_to_lower(pub_comentario), "casa|puerta|reja|jardin|ladrillo|fachada|techo|cerco") ~ "Descripción Física",
-      
-      # 6. ÉXITO / TRÁMITE NORMAL
-      str_detect(str_to_lower(pub_comentario), "completa|fluida|buena|correcta|terminada|finalizada") ~ "Encuesta Exitosa",
-      
-      # 7. CASOS VACÍOS O PUNTOS
-      is.na(pub_comentario) | pub_comentario %in% c(".", "") ~ "Sin Comentario Real",
-      
-      # Categoría por defecto si no entra en ninguna
-      TRUE ~ "Otros/Revisión Manual"
-    )
-  ) %>%
-  # Mover la variable recién creada después de comentarios_pub
-  relocate(categoria_comentario, .after = pub_comentario)
+# 11. PREPARACIÓN DE BASE FINAL LIMPIA ----
 
-# Verificación de cuántos cayeron en cada bolsa
-table(base_manga$categoria_comentario)
+# Limpieza de variables sobrantes
+base_manga_clear <- base_manga %>%
+  select(!starts_with("m_"))
+base_manga_clear <- base_manga_clear %>%
+  select(!starts_with("s_"))
+base_manga_clear <- base_manga_clear %>%
+  select(!starts_with("trash_"))
 
-coment <- base_manga %>%
-  select(pub_comentario, categoria_comentario)
-
-####################################################
-# FLUJO DE LIMPIEZA: BASE ESPEJO ODK (LABELS LIMPIOS)
-####################################################
-
+# Labels necesarios
 base_manga_clear <- base_manga_clear %>%
   # 1. Creamos el Label para asistencia (ahora p10_05a)
   mutate(
@@ -1064,6 +1140,8 @@ base_manga_clear <- base_manga_clear %>%
       TRUE    ~ as.character(.) # Por si hay algún NA o valor inesperado
     )
   ))
+
+# Ordenamiento de la BBDD
 
 base_odk_limpia <- base_manga_clear %>%
   filter(Exito_Auditoria == 1) %>%
@@ -1236,14 +1314,14 @@ base_odk_limpia <- base_manga_clear %>%
 
 # --- LIMPIEZA DE TEXTO ADICIONAL ---
 
-
 print("Base limpia generada con éxito siguiendo el orden del ODK.")
 
 
+# 12. GENERACIÓN DE REPORTES OPERATIVOS ----
 
-####################################################
-# REPORTE OPERATIVO HORIZONTAL (DÍAS POR COLUMNA)
-####################################################
+#------------------------------------------------------------------------------#
+### 12.1. Resumen de avance diario                                 ----
+#------------------------------------------------------------------------------#
 
 # 1. Calculamos la Sección de DETALLE (Solo encuestas efectivas/finales)
 detalle_data <- base_manga %>%
@@ -1286,3 +1364,40 @@ resumen_horizontal <- detalle_data %>%
 
 # --- VERIFICACIÓN ---
 print(resumen_horizontal)
+
+#------------------------------------------------------------------------------#
+### 12.2. Resumen de intervención por técnico                                ----
+#------------------------------------------------------------------------------#
+
+resumen_esquemas_tecnico <- base_manga_clear %>%
+  # 1. Filtramos solo encuestas efectivas (donde realmente hubo esquema)
+  filter(es_efectiva == 1) %>% 
+  
+  # 2. Agrupamos por técnico y por el tipo de experimento
+  group_by(tecnico_pull, grupo_experimento) %>%
+  summarise(total = n(), .groups = "drop") %>%
+  
+  # 3. Pivotamos para tener los esquemas en columnas y sea fácil de leer
+  pivot_wider(
+    names_from = grupo_experimento, 
+    values_from = total,
+    values_fill = 0 # Si un técnico no hizo de un tipo, pone 0 en vez de NA
+  ) %>%
+  
+  # 4. Calculamos un total general por técnico
+  mutate(Total_Intervenciones = rowSums(select(., -tecnico_pull), na.rm = TRUE)) %>%
+  
+  # 5. Ordenamos por el que tiene más trabajo realizado
+  arrange(desc(Total_Intervenciones))
+
+resumen_esquemas_tecnico <- resumen_esquemas_tecnico %>%
+  select (
+    Tecnico = tecnico_pull,
+    `ESQUEMA FUNCIONAL DETALLADO`,
+    `ESQUEMA FUNCIONAL SIMPLE`
+    
+  )
+
+# --- VERIFICACIÓN EN CONSOLA ---
+print("Resumen de Esquemas Realizados por Equipo Técnico:")
+print(resumen_esquemas_tecnico)

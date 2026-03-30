@@ -26,7 +26,7 @@ sheet_crudas <- tryCatch({
 })
 
 # Exportar usando el wrapper
-export_sheet(final_data,sheet_crudas, "BID_URUGUAY_Crudas",label = "Crudas",pause = 5)
+export_sheet(data_cruda,sheet_crudas, "BID_URUGUAY_Crudas",label = "Crudas",pause = 5)
 
 
 # Exportar datos auditados -----------------------------------------------------
