@@ -10,6 +10,8 @@
 
 base_manga <- data_cruda
 
+
+
 table(data_cruda$status_survey_resp)
 
 base_manga <- base_manga %>%
@@ -31,7 +33,8 @@ ids_a_eliminar <- c(
   "uuid:392ce1dc-b3bf-4383-885b-aff74438628f",
   "uuid:d552e5a1-90c1-4b4c-9589-792d7dff4569",
   "uuid:a483c90e-82b3-4086-b771-2d2585cdca13",
-  "uuid:adb2c0d5-c252-46d8-b161-38beb90109ba" # ESTE FUE UN CASO DE UNA ENCUESTA Q SE ELIMINO PQ SOLO FUE PARA RECOGER INFORMACIÓN
+  "uuid:adb2c0d5-c252-46d8-b161-38beb90109ba", # ESTE FUE UN CASO DE UNA ENCUESTA Q SE ELIMINO PQ SOLO FUE PARA RECOGER INFORMACIÓN
+  "uuid:84c25333-68a2-4c26-be10-0b58cf17d7a5" # Encuesta rehecha pero si se habia enviado
 )
 
 base_manga <- base_manga %>%
@@ -578,7 +581,7 @@ print(missing)
 ### 9.4. Alerta de Valores Numéricos Extremos ----
 
 # 1. Lista expandida de todas las variables integer
-vars_to_check <- c("p1_06", "p1_07", "p2_02", "p3_06", 
+vars_to_check <- c( "p1_07", "p2_02", "p3_06", 
                    "p4_01", "p10_03", 
                    "p5_09", "p5_19", "p8_01")
 
@@ -721,6 +724,23 @@ dup <- dup %>%
 # --- VERIFICACIÓN ---
 print("Resumen de duplicados:")
 print(dup)
+
+### 9.5.2. Levantamiento Manual de Alertas (Excepciones)                      ----
+
+# Agrega aquí las Keys de las encuestas que quieres validar manualmente
+# para que dejen de aparecer como duplicados.
+keys_validadas_manual <- c(
+  "uuid:3263275a-e878-4c89-91bc-3c559f386540",
+  "uuid:595a2d15-7be5-4600-b9cb-8a83f1cd2de6",
+  "uuid:be1452f1-fa9c-4f19-885d-94bb6162529d"
+)
+
+base_manga <- base_manga %>%
+  mutate(
+    # Si la key está en nuestra lista, forzamos el flag a 0
+    total_dup = if_else(key %in% keys_validadas_manual, 0, total_dup),
+    total_dup_name = if_else(key %in% keys_validadas_manual, 0, total_dup_name)
+  )
 
 ### 9.6. Alerta de Georeferenciación ----
 
@@ -1141,7 +1161,11 @@ base_manga_clear <- base_manga_clear %>%
     )
   ))
 
+
 # Ordenamiento de la BBDD
+
+base_manga_clear <- base_manga_clear %>%
+  table(base_manga_clear$status_survey_resp)
 
 base_odk_limpia <- base_manga_clear %>%
   filter(Exito_Auditoria == 1) %>%

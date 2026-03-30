@@ -494,3 +494,134 @@ consolidado_detallado_final <- base_manga %>%
 sheet_write(resumen_esquemas_tecnico, ss = id_sheet, sheet = "Resumen esquemas funcionales")
 
 print("Consolidado detallado generado y exportado a Google Sheets.")
+
+#==============================================================================#
+# 9. REPORTE CONSOLIDADO POR TÉCNICO (ESTADOS FINALES + ESFUERZO)        ----
+#==============================================================================#
+# 1. Métricas de INTENTOS (Esfuerzo físico total de la base de casos)
+metricas_esfuerzo <- base_manga_casos_clean %>%
+  group_by(Técnico = tecnico) %>%
+  summarise(
+    Total_Visitas_Realizadas = n(), 
+    Intentos_Efectivos = sum(resultado_visita == "EFECTIVA", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 2. Métricas de ESTADOS FINALES (Citas y Ausentes de la base limpia)
+estados_finales <- base_manga_clear %>%
+  group_by(Técnico = tecnico_pull) %>%
+  summarise(
+    Final_Citas = sum(status_num == 4, na.rm = TRUE),
+    Final_Ausentes = sum(status_num == 2, na.rm = TRUE),
+    # Guardamos el nombre exacto para el join
+    Padrones_Visitados_Unicos = n_distinct(padron_pull),
+    .groups = "drop"
+  )
+
+# 3. Consolidación con Metas y Semáforo de Manzanas
+reporte_tecnicos_final <- avance_manzana_pro %>%
+  group_by(Técnico = Tecnico) %>%
+  summarise(
+    `# Manzanas` = n_distinct(Manzana),
+    `Padrones Totales` = sum(`Padrones Totales`, na.rm = TRUE),
+    Total_Cierres_Limpios = sum(EFECTIVAS + RECHAZOS + NO_ELEGIBLES, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Unimos ambas métricas por el nombre del Técnico
+  left_join(metricas_esfuerzo, by = "Técnico") %>%
+  left_join(estados_finales, by = "Técnico") %>%
+  mutate(
+    # CÁLCULOS DE DESEMPEÑO
+    `% Recorrido` = round((Padrones_Visitados_Unicos / `Padrones Totales`) * 100, 1),
+    `% Avance Real` = round((Total_Cierres_Limpios / `Padrones Totales`) * 100, 1),
+    
+    # Tasa de efectividad: (Intentos Efectivos / Total de intentos realizados)
+    `Tasa de efectividad` = round((Intentos_Efectivos / Total_Visitas_Realizadas) * 100, 1)
+  ) %>%
+  # SELECCIÓN FINAL: Corregido el nombre con el signo "="
+  select(
+    Técnico,
+    `# Manzanas`,
+    `Padrones Totales`,
+    `Padrones Visitados` = Padrones_Visitados_Unicos, # <--- CORRECCIÓN AQUÍ
+    `% Recorrido`,
+    `% Avance Real`,
+    `Tasa de efectividad`,
+    `# de citas` = Final_Citas,
+    `# padrones con ocupantes ausentes` = Final_Ausentes
+  ) %>%
+  # Limpiar NAs para técnicos sin actividad (0 en lugar de NA)
+  mutate(across(where(is.numeric), ~ coalesce(.x, 0))) %>%
+  arrange(desc(`% Avance Real`))
+
+# --- EXPORTACIÓN ---
+sheet_write(reporte_tecnicos_final, ss = id_sheet, sheet = "Técnicos avance por manzana")
+
+# --- VERIFICACIÓN ---
+print(reporte_tecnicos_final)
+  
+#==============================================================================#
+# 10. BASE DE SEGUIMIENTO DE CITAS Y RECONTACTO                          ----
+#==============================================================================#
+
+base_seguimiento_citas <- case_management %>%
+  filter(status == "CITA") %>%
+  filter(id != 1) %>%
+# 2. Conversión de ID a character para evitar el error de "Incompatible Types"
+mutate(id = as.character(id)) %>%
+  # 1. Selección inicial de columnas del Case Management
+  select(
+    id,
+    tecnico = enumerator_name,
+    manzana,
+    nombre_participante,
+    telefono_1,
+    cita,   
+    intento
+  ) %>%
+  # 2. Cruce con base_manga_clear para traer los comentarios COMPLETOS
+  # Asumimos que 'id' en case_management es el mismo 'key' o 'id_padron' en base_manga_clear
+  left_join(
+    base_manga_clear %>% 
+      select(id, pub_comentario), 
+    by = c("id" = "id")
+  ) %>%
+  # 3. Transformaciones y cálculos
+  mutate(
+    # Cálculo de Intento - 1
+    intento_anterior = as.numeric(intento) - 1,
+    
+    # Limpieza de la cadena de cita para convertirla en objeto Date-Time
+    cita_clean = str_replace_all(cita, "Dia: |Hora:", ""),
+    fecha_cita_dt = ymd_hm(cita_clean, tz = "America/Montevideo", quiet = TRUE),
+    
+    # Variable de Alerta: ¿Ya se pasó la fecha y hora de la cita?
+    alerta_cita_vencida = case_when(
+      is.na(fecha_cita_dt) ~ "Sin Cita Programada",
+      fecha_cita_dt < now(tzone = "America/Montevideo") ~ "⚠️ CITA VENCIDA",
+      TRUE ~ "Pendiente"
+    )
+  ) %>%
+  # 4. Limpieza final y organización de columnas
+  select(
+    id, 
+    tecnico, 
+    manzana, 
+    nombre_participante,
+    telefono_1,
+    cita, 
+    comentarios_completos = pub_comentario, # Usamos el comentario de la base limpia
+    intento_anterior, 
+    alerta_cita_vencida
+  ) %>%
+  # En caso de múltiples visitas al mismo padrón, nos quedamos con la última información
+  distinct(id, .keep_all = TRUE)
+
+# --- VERIFICACIÓN ---
+print(paste("Citas procesadas:", nrow(base_seguimiento_citas)))
+table(base_seguimiento_citas$alerta_cita_vencida)
+
+# --- EXPORTACIÓN ---
+sheet_write(base_seguimiento_citas, ss = id_sheet, sheet = "Seguimiento Citas")
+
+print("Base de seguimiento de citas (con comentarios completos) exportada.")
