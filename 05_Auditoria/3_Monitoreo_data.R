@@ -572,6 +572,7 @@ mutate(id = as.character(id)) %>%
   # 1. Selección inicial de columnas del Case Management
   select(
     id,
+    fecha,
     tecnico = enumerator_name,
     manzana,
     nombre_participante,
@@ -607,6 +608,7 @@ mutate(id = as.character(id)) %>%
     id, 
     tecnico, 
     manzana, 
+    fecha,
     nombre_participante,
     telefono_1,
     cita, 
@@ -615,7 +617,8 @@ mutate(id = as.character(id)) %>%
     alerta_cita_vencida
   ) %>%
   # En caso de múltiples visitas al mismo padrón, nos quedamos con la última información
-  distinct(id, .keep_all = TRUE)
+  distinct(id, .keep_all = TRUE) %>%
+  arrange (tecnico)
 
 # --- VERIFICACIÓN ---
 print(paste("Citas procesadas:", nrow(base_seguimiento_citas)))
