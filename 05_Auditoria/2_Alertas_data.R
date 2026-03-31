@@ -7,10 +7,56 @@
 #------------------------------------------------------------------------------#
 
 # 1. CARGA DE DATOS Y PREPARACIÓN ------
+#==============================================================================#
+# CORRECCIÓN MASIVA DE VARIABLES (p10_00 == 1)                             ----
+#==============================================================================#
+
+# 1. Definimos el vector con todas las keys proporcionadas
+keys_a_corregir <- c(
+  "uuid:0a7f43a8-6f0d-4d71-bafe-95c8652f9ad8",
+  "uuid:1f0da5d5-34e9-4245-a6a0-f7813f0c4144",
+  "uuid:733569ca-73aa-417c-babf-6238a8d2ec7a",
+  "uuid:67b28bf4-f04d-4e93-9e90-8c9a68ea4905",
+  "uuid:6083fed4-01d0-473a-bb6b-6b03520ae073",
+  "uuid:a8c17822-63c9-497d-a196-379372326026",
+  "uuid:5f5c25ca-3d92-42d9-8136-10964e4727a8",
+  "uuid:5b7e80f4-aff8-487a-81bb-d15425de6daa",
+  "uuid:545b4012-721b-4d3e-90f7-7e2e405ec263",
+  "uuid:57efa5a5-4b07-48e9-af58-a8ee171e137e",
+  "uuid:079d1fa7-8371-4397-81a0-0dd14be49fad",
+  "uuid:63a99619-c8f3-4e74-bd91-db622b369858",
+  "uuid:51d66497-8bda-4da8-b5e3-6dc5e10e875e",
+  "uuid:36fe221f-1d09-4e29-8b6a-d08de9225684",
+  "uuid:ceaa458d-0b84-4af4-882a-6439b35dbf70",
+  "uuid:0ec6b45a-4b73-47f8-8a18-977f529981ef",
+  "uuid:e27f49d9-e3be-4f95-8a73-717ef61c274a",
+  "uuid:40d1afeb-d3f5-42d7-8582-2fb9c4a0069c",
+  "uuid:81991d28-c797-4f6c-828a-c4ac80a7e242",
+  "uuid:6e5e9dad-391c-420a-bd2a-0597cb69ae9f",
+  "uuid:70eb0061-136e-4088-9c16-048a7e93388e",
+  "uuid:e9e7886d-bee7-4481-b6b8-92ad7eb1a586",
+  "uuid:1def5d3a-f2c1-44fd-ab6c-5c410ed5ca24",
+  "uuid:19b53693-112c-494a-a4c5-4e95ee239669",
+  "uuid:874719df-55eb-467c-b878-666778f60ec7",
+  "uuid:0a96bf5f-1e51-4d76-8c91-7c6ba7c8eb2d",
+  "uuid:b5664cb2-f354-4dc9-b3ff-b8643eb47a30",
+  "uuid:ee44f4f1-8cbc-40a8-91a8-68a1d8125cdf"
+)
+
+# 2. Aplicamos el cambio en base_manga
+data_cruda <- data_cruda %>%
+  mutate(
+    # Si la key está en la lista, p10_00 pasa a ser 1, de lo contrario mantiene su valor
+    p10_00 = if_else(key %in% keys_a_corregir, 1, as.numeric(p10_00)),
+    p10_00_resp = if_else(key %in% keys_a_corregir, "SI", p10_00_resp)
+  )
+
+# 3. Verificación (opcional)
+verificacion <- data_cruda %>% 
+  filter(key %in% keys_a_corregir) %>% 
+  select(key, p10_00)
 
 base_manga <- data_cruda
-
-
 
 table(data_cruda$status_survey_resp)
 
@@ -549,6 +595,9 @@ variables_audit <- names(base_manga)[grepl("^[ms]_", names(base_manga))]
 base_manga <- base_manga %>%
   mutate(s_status_survey = 0)
 
+base_manga_p10 <- base_manga %>%
+  mutate(s_status_survey = 0)
+
 # 2. Creamos la tabla de "Hallazgos"
 tabla_errores_por_padron <- base_manga |>
   # Seleccionamos el ID y las columnas de flags
@@ -574,7 +623,7 @@ print(tabla_errores_por_padron)
 
 # Verificación de casos particulares de missings
 missing <- base_manga |>
-  filter(m_p5_11 == 1)
+  filter(m_p10_00 == 1)
 print(missing)
 
 
@@ -1160,6 +1209,8 @@ base_manga_clear <- base_manga_clear %>%
       TRUE    ~ as.character(.) # Por si hay algún NA o valor inesperado
     )
   ))
+
+table(base_manga_clear$p10_00)
 
 
 # Ordenamiento de la BBDD
