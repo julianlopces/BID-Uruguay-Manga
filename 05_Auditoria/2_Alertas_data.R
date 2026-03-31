@@ -7,8 +7,9 @@
 #------------------------------------------------------------------------------#
 
 # 1. CARGA DE DATOS Y PREPARACIÓN ------
+
 #==============================================================================#
-# CORRECCIÓN MASIVA DE VARIABLES (p10_00 == 1)                             ----
+# CORRECCIÓN DE VARIABLES (p10_00 == 1)
 #==============================================================================#
 
 # 1. Definimos el vector con todas las keys proporcionadas
@@ -115,7 +116,9 @@ correcciones_manuales <- tribble(
   "uuid:37caab2a-df0b-4859-97db-867798143707", "91423",
   "uuid:ffc0c3c0-79c9-4017-be4d-0c29f8514259", "91269",
   "uuid:81e6ac6c-ec09-4843-aed3-35bb3d8d1f8a", "91267",
-  "uuid:12d37063-c652-4b8f-a889-c46d8ed46b32", "91861"
+  "uuid:12d37063-c652-4b8f-a889-c46d8ed46b32", "91861",
+  "uuid:16a8076d-f516-44d0-950e-d7e63b04487f", "404051",
+  "uuid:8c365fcc-720d-488f-8b9c-7c9d389eb5dd", "107615"
   
   
 )
