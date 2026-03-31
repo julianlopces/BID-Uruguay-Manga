@@ -1164,9 +1164,6 @@ base_manga_clear <- base_manga_clear %>%
 
 # Ordenamiento de la BBDD
 
-base_manga_clear <- base_manga_clear %>%
-  table(base_manga_clear$status_survey_resp)
-
 base_odk_limpia <- base_manga_clear %>%
   filter(Exito_Auditoria == 1) %>%
   arrange(starttime) %>%
