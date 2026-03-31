@@ -491,7 +491,7 @@ consolidado_detallado_final <- base_manga %>%
   arrange(desc(EFECTIVAS))
 
 ### 8.1. Exportación  ----
-sheet_write(resumen_esquemas_tecnico, ss = id_sheet, sheet = "Resumen esquemas funcionales")
+sheet_write(consolidado_detallado_final, ss = id_sheet, sheet = "Consolidado_Productividad_Alertas")
 
 print("Consolidado detallado generado y exportado a Google Sheets.")
 
